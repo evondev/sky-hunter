@@ -1,13 +1,15 @@
 # assets/ — sprite cho Sky Hunter AI
 
-Game ưu tiên dùng ảnh PNG trong thư mục này; **thiếu file nào thì tự vẽ bằng code** (fallback),
-nên game luôn chạy được kể cả khi chưa có ảnh.
+## CHỈ BOSS dùng ảnh PNG — còn lại VẼ TAY hết
+Hiện game **chỉ nạp ảnh boss** (`boss_01.png` … `boss_08.png`). Máy bay người chơi, drone, lính đều
+được **vẽ bằng code**, không dùng ảnh (cho gọn & đỡ lag).
 
-## ĐANG DÙNG: ảnh boss `boss_01.png` … `boss_08.png`
-- **Màn 1 → 6**: dùng `boss_01.png` → `boss_06.png` (mỗi màn 1 boss khác nhau).
+- **Màn 1 → 6**: `boss_01.png` → `boss_06.png` (mỗi màn 1 boss khác nhau).
 - **Boss cuối (màn 7)**: `boss_07.png`, và **đổi sang `boss_08.png` khi boss NỔI ĐIÊN (phase 3)**.
 - Ảnh ngang cũng OK — code tự giữ tỉ lệ và vẽ to theo bề rộng.
-- (Máy bay người chơi & lính hiện vẫn vẽ bằng code vì chưa có ảnh — thêm `player.png`, `enemy-*.png` theo bảng dưới nếu muốn.)
+
+> Muốn dùng lại ảnh cho player/lính sau này: thêm tên key vào mảng `loadSprite(...)` trong `index.html`
+> rồi bỏ file PNG đúng tên vào đây (xem bảng tham khảo bên dưới).
 
 ## Danh sách file (đặt ĐÚNG tên này)
 

@@ -115,14 +115,14 @@
       <div class="name">NGƯỜI CHƠI 1 (tay)</div>
       <div class="row"><span>Vũ khí: <span class="wlvl" id="w1">Lv.1</span></span><span id="s1">Năng lượng</span></div>
       <div class="ebar"><i id="e1"></i></div>
-      <div class="row"><span>✊ Khiên</span><span class="combo" id="c1"></span></div>
+      <div class="row"><span>✊ Tuyệt chiêu · 💀 <span id="d1">0</span></span><span class="combo" id="c1"></span></div>
       <div class="rbar" id="rbar1"><i id="r1"></i></div>
     </div>
     <div class="pcard p2 off" id="card-p2">
       <div class="name">NGƯỜI CHƠI 2 (tay)</div>
       <div class="row"><span>Vũ khí: <span class="wlvl" id="w2">Lv.1</span></span><span id="s2">Năng lượng</span></div>
       <div class="ebar"><i id="e2"></i></div>
-      <div class="row"><span>✊ Khiên</span><span class="combo" id="c2"></span></div>
+      <div class="row"><span>✊ Tuyệt chiêu · 💀 <span id="d2">0</span></span><span class="combo" id="c2"></span></div>
       <div class="rbar" id="rbar2"><i id="r2"></i></div>
     </div>
   </div>
@@ -135,7 +135,7 @@
     <div class="sub">
       Vung <b>bàn tay trước camera</b> để lái phi thuyền — máy bay <b>tự bắn</b>.
       Ăn <b>viên năng lượng xanh</b> để <b>lên cấp vũ khí</b> và mở khoá <b>lính bay kèm</b>.
-      Nạp đầy thanh rồi <b>✊ NẮM TAY = bật REFLECT LASER 5 giây</b>: bất tử + phun mưa đạn vàng quét sạch màn hình!
+Có <b>2 lượt tuyệt chiêu mỗi mạng</b> (hồi lại khi dính đạn). Khi cần: <b>✊ NẮM TAY rồi XÒE RA</b> để bung <b>REFLECT LASER 5 giây</b> — bất tử + mưa đạn vàng quét màn hình!
       Nhận diện <b>2 tay = 2 người chơi</b>. <b>7 màn</b> — hạ <b>BOSS CUỐI</b> để CHIẾN THẮNG! (Né đạn nhờ chấm chí mạng ở giữa máy bay.)
     </div>
     <div class="btns">
@@ -239,21 +239,20 @@ const game = {
 };
 
 const FINAL_LEVEL = 7;     // màn cuối — hạ BOSS CUỐI = thắng game
-const STAGE_DURATION = 180; // giây cày lính mỗi màn TRƯỚC khi boss xuất hiện (~3 phút)
+const STAGE_DURATION = 90; // giây cày lính mỗi màn TRƯỚC khi boss xuất hiện (1 phút rưỡi)
+const ENEMY_CAP = 32;      // trần số lính trên màn (vừa phải, dễ né hơn)
 
 // ----- REFLECT LASER (skill Giga Wing) — bật 5 giây khi charge đầy -----
 const PLAYER_HITBOX = 9; // vùng CHẾT thật của máy bay (tí hon kiểu danmaku)
 const REFLECT = {
   radius: 110,        // bán kính hút đạn địch khi đang bật laser
-  max: 100,           // charge tối đa (phải ĐẦY mới bật được)
-  regen: 9,           // hồi charge thụ động mỗi giây (~11s đầy nếu không ăn orb)
-  orbGain: 14,        // +charge mỗi viên năng lượng ăn được
   duration: 5,        // skill kéo dài 5 giây
   fireInterval: 0.045,// mỗi đợt mưa đạn vàng
   volley: 14,         // số đạn vàng mỗi đợt (mưa đạn dày như Giga Wing)
   spread: 1.45,       // độ toả quạt (~83°)
   laserSpeed: 880,
   comboPer: 25,       // điểm cộng mỗi viên đạn hút được trong lúc bật
+  maxStock: 2,        // tối đa để dành 2 lượt tuyệt chiêu
 };
 
 // Two persistent player slots; activated when a controller (hand/mouse) maps to them.
@@ -261,9 +260,9 @@ function makePlayer(id, color) {
   return {
     id, color, active: false, x: W*0.5, y: H*0.7, tx: W*0.5, ty: H*0.7,
     weapon: 1, energy: 0, energyMax: 3, fireCd: 0, invuln: 0, seen: 0,
-    // reflect laser
-    reflectCharge: 0, reflecting: false, wantReflect: false, absorbed: 0,
-    reflectTimer: 0, fireLaserCd: 0,
+    // reflect laser: 2 lượt/mạng, chỉ hồi khi "chết" (dính đạn)
+    reflecting: false, wantReflect: false, absorbed: 0,
+    reflectTimer: 0, fireLaserCd: 0, reflectStock: REFLECT.maxStock, wasFist: false, deaths: 0,
   };
 }
 // Khi dính đạn: bất tử (không game over) nhưng TỤT 1 CẤP vũ khí (sàn Lv.1), giữ charge.
@@ -271,6 +270,8 @@ function loseLevel(p) {
   if (p.weapon > 1) p.weapon--;
   p.energy = 0; p.energyMax = 2 + p.weapon; // ngưỡng năng lượng khớp cấp mới
   p.invuln = 1.5;
+  p.deaths++;                          // đếm số lần chết
+  p.reflectStock = REFLECT.maxStock;   // "chết" thì hồi lại 2 lượt tuyệt chiêu
   game.shake = Math.max(game.shake, 14);
   toast((p.id===0?"P1":"P2") + " −1 CẤP (Lv." + p.weapon + ")", p.color);
 }
@@ -309,9 +310,10 @@ function loadSprite(key, src) {
   img.src = src;
   SPRITES[key] = rec;
 }
-["player","drone","enemy-basic","enemy-shooter","enemy-tank","finalboss-core","finalboss-turret",
- "boss_01","boss_02","boss_03","boss_04","boss_05","boss_06","boss_07","boss_08"]
+// CHỈ boss dùng ảnh PNG; máy bay người chơi & lính vẽ tay hết.
+["boss_01","boss_02","boss_03","boss_04","boss_05","boss_06","boss_07","boss_08"]
   .forEach(key => loadSprite(key, "assets/" + key + ".png"));
+let spritesOn = true; // (giữ cho tương lai) cờ tắt sprite nếu FPS tụt
 function sprite(key) { const s = SPRITES[key]; return (s && s.ready) ? s.img : null; }
 function drawSpriteImg(img, x, y, size) {
   const scale = size / Math.max(img.width, img.height); // giữ tỉ lệ, vẽ giữa tâm
@@ -373,7 +375,7 @@ function updateReflect(p, dt) {
       }
     }
     if (p.reflectTimer <= 0) {
-      p.reflectTimer = 0; p.reflecting = false; p.reflectCharge = 0;
+      p.reflectTimer = 0; p.reflecting = false;
       if (p.absorbed > 0) {
         const bonus = p.absorbed * REFLECT.comboPer;
         game.score += bonus;
@@ -382,17 +384,19 @@ function updateReflect(p, dt) {
       }
       p.absorbed = 0;
     }
+    p.wasFist = p.wantReflect;
     return;
   }
-  // chưa bật: hồi charge thụ động
-  if (p.reflectCharge < REFLECT.max)
-    p.reflectCharge = Math.min(REFLECT.max, p.reflectCharge + REFLECT.regen*dt);
-  // nắm tay (hoặc Space) khi charge ĐẦY → kích hoạt 5 giây
-  if (p.wantReflect && p.reflectCharge >= REFLECT.max) {
+  // KHÔNG tự hồi theo thời gian — chỉ reset khi "chết" (dính đạn).
+  // BẮN khi XÒE TAY (nhả nắm) và còn lượt.
+  const released = p.wasFist && !p.wantReflect;
+  if (released && p.reflectStock > 0) {
+    p.reflectStock--;
     p.reflectTimer = REFLECT.duration; p.reflecting = true; p.absorbed = 0; p.fireLaserCd = 0;
     game.shake = Math.max(game.shake, 9); Sound.boss();
     toast((p.id===0?"P1":"P2") + " ⚡ REFLECT LASER!", "#ffd23f");
   }
+  p.wasFist = p.wantReflect;
 }
 
 /* ----------------------------- Enemies ---------------------------------- */
@@ -424,7 +428,7 @@ function rollEnemyType(lv, progress) {
 function spawnBoss() {
   Sound.boss();
   const lv = game.level;
-  const hp = 1800 + lv * 700;          // SIÊU TRÂU — đánh lâu mới gục (chơi bất tử nên phải khó)
+  const hp = 5400 + lv * 2100;         // ~x3 — máu tụt chậm hơn nhiều, đánh lâu mới gục
   const r = Math.min(160, 96 + lv * 6); // phình to dần theo màn
   game.boss = { x: W/2, y: -190, ty: 150, r, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.0, pattern: 0, patternT: 0, spin: 0, entered:false };
   document.getElementById("boss-wrap").classList.remove("hidden");
@@ -434,13 +438,13 @@ function spawnBoss() {
 function spawnFinalBoss() {
   Sound.boss();
   const r = 140;
-  const hp = 9000; // máu core CỰC TRÂU; phải phá 2 pháo trước mới thủng được core
+  const hp = 27000; // máu core CỰC TRÂU (~x3); phải phá 2 pháo trước mới thủng được core
   game.boss = {
     x: W/2, y: -240, ty: 165, r, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.0, pattern: 0, patternT: 0, spin: 0, entered: false,
     final: true, phase: 1,
     parts: [
-      { ox: -r-6, oy: 10, hp: 900, hpMax: 900, alive: true, fireCd: rand(0.6, 1.6) },
-      { ox:  r+6, oy: 10, hp: 900, hpMax: 900, alive: true, fireCd: rand(0.6, 1.6) },
+      { ox: -r-6, oy: 10, hp: 2700, hpMax: 2700, alive: true, fireCd: rand(0.6, 1.6) },
+      { ox:  r+6, oy: 10, hp: 2700, hpMax: 2700, alive: true, fireCd: rand(0.6, 1.6) },
     ],
   };
   document.getElementById("boss-wrap").classList.remove("hidden");
@@ -576,8 +580,9 @@ function update(dt) {
       if (p.invuln > 0) p.invuln -= dt;
       firePlayer(p, dt);
       updateReflect(p, dt);
-    } else if (p.reflectTimer > 0) {
-      p.reflectTimer = 0; p.reflecting = false; p.wantReflect = false;
+    } else {
+      p.wantReflect = false; p.wasFist = false;
+      if (p.reflectTimer > 0) { p.reflectTimer = 0; p.reflecting = false; }
     }
   }
   const anyActive = players.some(p => p.active);
@@ -587,10 +592,11 @@ function update(dt) {
     game.stageElapsed += dt;
     const progress = Math.min(1, game.stageElapsed / STAGE_DURATION);
     game.spawnTimer -= dt;
-    if (game.spawnTimer <= 0) {
-      game.spawnTimer = rand(0.7, 1.15) - progress*0.45; // càng về cuối màn spawn càng dồn dập
-      const batch = 1 + (progress > 0.45 ? 1 : 0) + (progress > 0.8 ? 1 : 0);
-      for (let i = 0; i < batch; i++) game.enemies.push(spawnEnemy(rollEnemyType(game.level, progress)));
+    if (game.spawnTimer <= 0 && game.enemies.length < ENEMY_CAP) {
+      game.spawnTimer = rand(0.6, 1.0) - progress*0.2; // thưa hơn cho dễ né
+      const batch = 1 + (progress > 0.5 ? 1 : 0) + (progress > 0.85 ? 1 : 0); // 1 → 3 con mỗi đợt
+      for (let i = 0; i < batch && game.enemies.length < ENEMY_CAP; i++)
+        game.enemies.push(spawnEnemy(rollEnemyType(game.level, progress)));
     }
     if (game.stageElapsed >= STAGE_DURATION) { game.bossQueued = true; toast("BOSS SẮP TỚI!", "#ff3d7f"); }
   }
@@ -616,11 +622,14 @@ function update(dt) {
     e.x = e.baseX + Math.sin(e.t*1.4) * 40;
     if (e.type === "shooter" && e.y > 0 && e.y < H*0.7) {
       e.fireCd -= dt;
-      if (e.fireCd <= 0 && anyActive) {
-        e.fireCd = rand(1.4, 2.6);
+      if (e.fireCd <= 0 && anyActive && game.eBullets.length < EB_CAP) {
+        e.fireCd = rand(0.85, 1.6);
         const target = players.find(p=>p.active);
-        const ang = Math.atan2(target.y - e.y, target.x - e.x);
-        game.eBullets.push({ x:e.x, y:e.y, vx:Math.cos(ang)*240, vy:Math.sin(ang)*240, r:6, color:"#ffec6b" });
+        const base = Math.atan2(target.y - e.y, target.x - e.x);
+        const spd = 320; // vừa phải để né kịp
+        const offs = Math.random() < 0.3 ? [-0.16, 0, 0.16] : [0]; // thỉnh thoảng 3 tia
+        for (const off of offs)
+          game.eBullets.push({ x:e.x, y:e.y, vx:Math.cos(base+off)*spd, vy:Math.sin(base+off)*spd, r:6, color:"#ffec6b" });
       }
     }
     if (e.y > H + 40) { e._gone = true; } // lính thoát đáy: biến mất im lặng (đỡ rung/kêu khi cày dài)
@@ -768,7 +777,11 @@ function killEnemy(e, silent) {
   addParticles(e.x, e.y, e.color, 14, 220);
   game.shake = Math.max(game.shake, 5);
   if (!silent) Sound.boom();
-  const orbCount = e.type === "tank" ? 3 : e.type === "shooter" ? 2 : 1;
+  // năng lượng RA HIẾM: tank chắc chắn cho 1, còn lại ~18% mới rớt 1–2 viên
+  // → người chơi không phải lúc nào cũng max cấp, boss/lính khó hơn nhiều
+  let orbCount = 0;
+  if (e.type === "tank") orbCount = 1;
+  else if (Math.random() < 0.18) orbCount = 1 + (Math.random() < 0.35 ? 1 : 0);
   for (let i = 0; i < orbCount; i++) game.orbs.push({ x:e.x+rand(-14,14), y:e.y, vy:40, r:11, t:0 });
   if (game.waveLeft > 0) game.waveLeft--;
   updateHUD();
@@ -793,7 +806,6 @@ function killBoss() {
 function collectEnergy(p) {
   Sound.power(); game.score += 5;
   p.energy += 2; // mỗi viên +2 năng lượng → lên cấp nhanh
-  p.reflectCharge = Math.min(REFLECT.max, p.reflectCharge + REFLECT.orbGain); // nạp khiên
   addParticles(p.x, p.y, "#5cff8f", 10, 180);
   while (p.energy >= p.energyMax) {
     p.energy -= p.energyMax;
@@ -806,7 +818,7 @@ function collectEnergy(p) {
 }
 
 /* ----------------------------- Boss AI ---------------------------------- */
-const EB_CAP = 620; // trần số đạn địch trên màn để giữ FPS (bullet hell vẫn mượt)
+const EB_CAP = 950; // trần số đạn địch trên màn để giữ FPS (bullet hell dày hơn)
 function updateBoss(dt, anyActive) {
   const bs = game.boss; bs.t += dt;
   if (!bs.entered) {
@@ -830,39 +842,39 @@ function updateBoss(dt, anyActive) {
   if (bs.fireCd > 0) return;
 
   if (bs.pattern === 0) {
-    // XOẮN ỐC: phun liên tục theo góc xoay dần
+    // XOẮN ỐC
     bs.fireCd = 0.05;
-    bs.spin += 0.42;
-    const arms = 3;
+    bs.spin += 0.40;
+    const arms = 4;
     for (let k = 0; k < arms; k++) {
       const a = bs.spin + k * (Math.PI*2/arms);
-      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*215, vy:Math.sin(a)*215, r:7, color:"#ff6bd6" });
+      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*235, vy:Math.sin(a)*235, r:7, color:"#ff6bd6" });
     }
   } else if (bs.pattern === 1) {
-    // HOA NỞ: nhả nguyên vòng tròn, lệch dần từng đợt
-    bs.fireCd = 0.9;
-    const n = 26, off = bs.t*0.6;
+    // HOA NỞ: vòng tròn lệch dần
+    bs.fireCd = 0.85;
+    const n = 30, off = bs.t*0.6;
     for (let i = 0; i < n; i++) {
       const a = off + (i/n)*Math.PI*2;
-      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*172, vy:Math.sin(a)*172, r:7, color:"#9d7bff" });
+      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*185, vy:Math.sin(a)*185, r:7, color:"#9d7bff" });
     }
   } else if (bs.pattern === 2) {
-    // TƯỜNG ĐẠN NGẮM: quạt rộng nhắm người chơi gần nhất
-    bs.fireCd = 0.55;
+    // TƯỜNG ĐẠN NGẮM: quạt rộng nhắm người chơi
+    bs.fireCd = 0.5;
     const target = players.find(p=>p.active);
     if (target) {
       const base = Math.atan2(target.y-bs.y, target.x-bs.x);
-      for (let i = -5; i <= 5; i++) {
-        const a = base + i*0.12;
-        game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*285, vy:Math.sin(a)*285, r:6, color:"#ffec6b" });
+      for (let i = -6; i <= 6; i++) {
+        const a = base + i*0.11;
+        game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*290, vy:Math.sin(a)*290, r:6, color:"#ffec6b" });
       }
     }
   } else {
-    // MƯA RÈM: rải đạn rơi dọc khắp bề ngang
+    // MƯA RÈM: rải đạn rơi dọc
     bs.fireCd = 0.1;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       const x = rand(40, W-40);
-      game.eBullets.push({ x, y: bs.y, vx: rand(-30,30), vy: rand(220,300), r:6, color:"#ff9d3d" });
+      game.eBullets.push({ x, y: bs.y, vx: rand(-30,30), vy: rand(250,320), r:6, color:"#ff9d3d" });
     }
   }
 }
@@ -887,12 +899,12 @@ function updateFinalBoss(dt, anyActive) {
       if (!part.alive) continue;
       part.fireCd -= dt;
       if (part.fireCd <= 0 && anyActive && game.eBullets.length < EB_CAP) {
-        part.fireCd = 1.1;
+        part.fireCd = 0.85;
         const px = bs.x+part.ox, py = bs.y+part.oy;
         const target = players.find(p=>p.active);
         if (target) {
           const base = Math.atan2(target.y-py, target.x-px);
-          for (const off of [-0.18,0,0.18]) game.eBullets.push({ x:px, y:py, vx:Math.cos(base+off)*270, vy:Math.sin(base+off)*270, r:6, color:"#ffec6b" });
+          for (const off of [-0.18,0,0.18]) game.eBullets.push({ x:px, y:py, vx:Math.cos(base+off)*285, vy:Math.sin(base+off)*285, r:6, color:"#ffec6b" });
         }
       }
     }
@@ -903,26 +915,26 @@ function updateFinalBoss(dt, anyActive) {
   if (bs.fireCd > 0) return;
 
   if (bs.phase === 1) {
-    // vòng tròn lệch chậm (vừa phải, lo phá pháo trước)
-    bs.fireCd = 1.0;
-    const n = 22, off = bs.t*0.5;
-    for (let i=0;i<n;i++){ const a = off + (i/n)*Math.PI*2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*160, vy:Math.sin(a)*160, r:7, color:"#9d7bff" }); }
+    // vòng tròn lệch dần (lo phá pháo trước)
+    bs.fireCd = 0.9;
+    const n = 26, off = bs.t*0.5;
+    for (let i=0;i<n;i++){ const a = off + (i/n)*Math.PI*2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*175, vy:Math.sin(a)*175, r:7, color:"#9d7bff" }); }
   } else if (bs.phase === 2) {
-    // xoắn ốc kép
+    // xoắn ốc 3 cánh
     bs.fireCd = 0.05; bs.spin += 0.5;
-    for (let k=0;k<2;k++){ const a = bs.spin + k*Math.PI; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*225, vy:Math.sin(a)*225, r:7, color:"#ff6bd6" }); }
+    for (let k=0;k<3;k++){ const a = bs.spin + k*(Math.PI*2/3); game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*240, vy:Math.sin(a)*240, r:7, color:"#ff6bd6" }); }
   } else {
-    // PHASE 3 nổi điên: xoắn 4 cánh nhanh + mưa rèm
-    bs.fireCd = 0.04; bs.spin += 0.62;
-    for (let k=0;k<4;k++){ const a = bs.spin + k*Math.PI/2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*255, vy:Math.sin(a)*255, r:7, color:"#ff2d2d" }); }
-    if (Math.random() < 0.5) { const x = rand(40,W-40); game.eBullets.push({ x, y:bs.y, vx:0, vy:300, r:6, color:"#ff9d3d" }); }
+    // PHASE 3 nổi điên: xoắn 4 cánh + mưa rèm
+    bs.fireCd = 0.045; bs.spin += 0.6;
+    for (let k=0;k<4;k++){ const a = bs.spin + k*Math.PI/2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*275, vy:Math.sin(a)*275, r:7, color:"#ff2d2d" }); }
+    if (Math.random() < 0.6) { const x = rand(40,W-40); game.eBullets.push({ x, y:bs.y, vx:0, vy:330, r:6, color:"#ff9d3d" }); }
   }
 }
 
 /* ----------------------------- Render ----------------------------------- */
 function drawShip(p) {
   const blink = p.invuln > 0 && (Math.floor(p.invuln*12)%2===0);
-  const img = sprite("player");
+  const img = spritesOn ? sprite("player") : null;
   if (img) {
     ctx.save(); if (blink) ctx.globalAlpha = 0.35;
     if (p.reflecting) { ctx.shadowColor = "#ffd23f"; ctx.shadowBlur = 22; }
@@ -948,14 +960,14 @@ function drawShip(p) {
   ctx.restore();
 }
 function drawDrone(d, color) {
-  const img = sprite("drone");
+  const img = spritesOn ? sprite("drone") : null;
   if (img) { drawSpriteImg(img, d.x, d.y, 26); return; }
   ctx.save(); ctx.translate(d.x,d.y); ctx.shadowColor=color; ctx.shadowBlur=10;
   ctx.fillStyle = color; ctx.fillRect(-7,-7,14,14);
   ctx.fillStyle = "#04121a"; ctx.fillRect(-3,-3,6,6); ctx.restore();
 }
 function drawEnemy(e) {
-  const img = sprite("enemy-" + e.type);
+  const img = spritesOn ? sprite("enemy-" + e.type) : null;
   if (img) { drawSpriteImg(img, e.x, e.y, e.r*2.3); return; }
   ctx.save(); ctx.translate(e.x, e.y); ctx.shadowColor=e.color; ctx.shadowBlur=12; ctx.fillStyle=e.color;
   if (e.type === "tank") {
@@ -1145,13 +1157,14 @@ function updatePlayerCards() {
     document.getElementById("e"+(i+1)).style.width = (100*p.energy/p.energyMax) + "%";
     // thanh laser reflect + trạng thái
     const rbar = document.getElementById("rbar"+(i+1));
-    document.getElementById("r"+(i+1)).style.width = (100*p.reflectCharge/REFLECT.max) + "%";
-    const ready = p.reflectCharge >= REFLECT.max;
-    rbar.classList.toggle("ready", ready && !p.reflecting);
+    const stock = p.reflectStock;
+    document.getElementById("r"+(i+1)).style.width = (100*stock/REFLECT.maxStock) + "%";
+    rbar.classList.toggle("ready", stock > 0 && !p.reflecting);
+    document.getElementById("d"+(i+1)).textContent = p.deaths;
     const combo = document.getElementById("c"+(i+1));
     if (p.reflecting) { combo.textContent = "⚡ LASER " + p.reflectTimer.toFixed(1) + "s"; combo.style.color = "var(--gold)"; }
-    else if (ready) { combo.textContent = "SẴN SÀNG ✊"; combo.style.color = "var(--gold)"; }
-    else { combo.textContent = "đang nạp…"; combo.style.color = "#7f91b0"; }
+    else if (stock > 0) { combo.textContent = "✊×" + stock + " — XÒE TAY bắn!"; combo.style.color = "var(--gold)"; }
+    else { combo.textContent = "hết lượt (dính đạn để hồi)"; combo.style.color = "#7f91b0"; }
   });
 
   // đồng hồ đếm ngược tới boss
@@ -1167,9 +1180,19 @@ function updatePlayerCards() {
 
 /* ----------------------------- Main loop -------------------------------- */
 let last = performance.now();
+let fpsAvg = 60, lowPerfTimer = 0;
 function loop(now) {
-  let dt = (now - last) / 1000; last = now;
-  if (dt > 0.05) dt = 0.05;
+  const rawDt = (now - last) / 1000; last = now;
+  // theo dõi FPS: nếu tụt lâu → tắt sprite, quay về vẽ tay cho mượt
+  const fps = rawDt > 0 ? 1/rawDt : 60;
+  fpsAvg += (fps - fpsAvg) * 0.08;
+  if (spritesOn && state === STATE.PLAYING && fpsAvg < 45) {
+    lowPerfTimer += rawDt;
+    if (lowPerfTimer > 2.5) { spritesOn = false; toast("⚙ Giảm hiệu ứng cho đỡ lag", "#7fd6ff"); }
+  } else if (lowPerfTimer > 0) {
+    lowPerfTimer = Math.max(0, lowPerfTimer - rawDt);
+  }
+  const dt = rawDt > 0.05 ? 0.05 : rawDt;
   update(dt);
   render();
   requestAnimationFrame(loop);
