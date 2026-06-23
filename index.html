@@ -79,6 +79,13 @@
   .toast { position:absolute; top: 38%; left:50%; transform: translateX(-50%); z-index: 9;
     font-size: clamp(22px,4vw,44px); font-weight:900; letter-spacing:4px; color: var(--gold);
     text-shadow:0 0 14px rgba(255,210,63,.8); opacity:0; }
+
+  /* reflect (khiên Giga Wing) bar trên thẻ người chơi */
+  .rbar { height: 8px; border-radius: 6px; background: rgba(255,255,255,.12); overflow:hidden; margin-top: 6px; }
+  .rbar > i { display:block; height:100%; width:0%; background: linear-gradient(90deg,#7a5cff,#38e8ff); transition: width .1s; }
+  .rbar.ready > i { background: linear-gradient(90deg,#ffd23f,#ff3d7f); box-shadow: 0 0 10px var(--gold); }
+  .combo { color: var(--gold); font-weight: 800; letter-spacing: 1px; }
+  .reflecting-on { color: var(--neon); font-weight: 800; }
 </style>
 </head>
 <body>
@@ -93,6 +100,7 @@
     <div class="hud-center">
       <div class="title-mini">★ SKY HUNTER AI ★</div>
       <div class="badge" style="margin-top:6px"><span class="lbl">LEVEL</span><span class="val" id="hud-level">1</span></div>
+      <div class="badge" style="margin-top:6px"><span class="lbl">BOSS SAU</span><span class="val" id="boss-eta">--</span></div>
     </div>
     <div class="badge score"><span class="lbl">ĐIỂM</span><span class="val" id="hud-score">0</span></div>
   </div>
@@ -107,11 +115,15 @@
       <div class="name">NGƯỜI CHƠI 1 (tay)</div>
       <div class="row"><span>Vũ khí: <span class="wlvl" id="w1">Lv.1</span></span><span id="s1">Năng lượng</span></div>
       <div class="ebar"><i id="e1"></i></div>
+      <div class="row"><span>✊ Khiên</span><span class="combo" id="c1"></span></div>
+      <div class="rbar" id="rbar1"><i id="r1"></i></div>
     </div>
     <div class="pcard p2 off" id="card-p2">
       <div class="name">NGƯỜI CHƠI 2 (tay)</div>
       <div class="row"><span>Vũ khí: <span class="wlvl" id="w2">Lv.1</span></span><span id="s2">Năng lượng</span></div>
       <div class="ebar"><i id="e2"></i></div>
+      <div class="row"><span>✊ Khiên</span><span class="combo" id="c2"></span></div>
+      <div class="rbar" id="rbar2"><i id="r2"></i></div>
     </div>
   </div>
 
@@ -123,7 +135,8 @@
     <div class="sub">
       Vung <b>bàn tay trước camera</b> để lái phi thuyền — máy bay <b>tự bắn</b>.
       Ăn <b>viên năng lượng xanh</b> để <b>lên cấp vũ khí</b> và mở khoá <b>lính bay kèm</b>.
-      Nhận diện được <b>2 tay = 2 người chơi cùng phe</b>. Hạ <b>TRÙM</b> mỗi 3 màn!
+      Nạp đầy thanh rồi <b>✊ NẮM TAY = bật REFLECT LASER 5 giây</b>: bất tử + phun mưa đạn vàng quét sạch màn hình!
+      Nhận diện <b>2 tay = 2 người chơi</b>. <b>7 màn</b> — hạ <b>BOSS CUỐI</b> để CHIẾN THẮNG! (Né đạn nhờ chấm chí mạng ở giữa máy bay.)
     </div>
     <div class="btns">
       <button class="cta" id="btn-cam">▶ BẮT ĐẦU (CAMERA)</button>
@@ -138,6 +151,13 @@
     <div class="title" style="color:var(--neon2);text-shadow:0 0 12px var(--neon2)">HẾT MẠNG<small>CHIẾN ĐẤU ANH DŨNG!</small></div>
     <div class="sub">Điểm cuối: <b id="final-score">0</b> &nbsp;·&nbsp; Tới Level <b id="final-level">1</b></div>
     <div class="btns"><button class="cta" id="btn-again">⟳ CHƠI LẠI</button></div>
+  </div>
+
+  <!-- VICTORY -->
+  <div class="overlay hidden" id="victory">
+    <div class="title" style="color:var(--gold);text-shadow:0 0 16px var(--gold)">CHIẾN THẮNG!<small>HẠ GỤC BOSS CUỐI</small></div>
+    <div class="sub">Bạn đã phá đảo <b id="win-stages">7</b> màn! &nbsp;·&nbsp; Điểm cuối: <b id="win-score">0</b></div>
+    <div class="btns"><button class="cta" id="btn-again2">⟳ CHƠI LẠI</button></div>
   </div>
 </div>
 
@@ -213,9 +233,27 @@ let useCamera = false;
 const game = {
   score: 0, lives: 5, level: 1,
   enemies: [], pBullets: [], eBullets: [], orbs: [], particles: [], drones: [],
-  boss: null, bossPending: false,
-  spawnTimer: 0, waveLeft: 0, levelClearTimer: 0,
+  boss: null, bossPending: false, bossQueued: false,
+  spawnTimer: 0, waveLeft: 0, levelClearTimer: 0, stageElapsed: 0,
   shake: 0,
+};
+
+const FINAL_LEVEL = 7;     // màn cuối — hạ BOSS CUỐI = thắng game
+const STAGE_DURATION = 180; // giây cày lính mỗi màn TRƯỚC khi boss xuất hiện (~3 phút)
+
+// ----- REFLECT LASER (skill Giga Wing) — bật 5 giây khi charge đầy -----
+const PLAYER_HITBOX = 9; // vùng CHẾT thật của máy bay (tí hon kiểu danmaku)
+const REFLECT = {
+  radius: 110,        // bán kính hút đạn địch khi đang bật laser
+  max: 100,           // charge tối đa (phải ĐẦY mới bật được)
+  regen: 9,           // hồi charge thụ động mỗi giây (~11s đầy nếu không ăn orb)
+  orbGain: 14,        // +charge mỗi viên năng lượng ăn được
+  duration: 5,        // skill kéo dài 5 giây
+  fireInterval: 0.045,// mỗi đợt mưa đạn vàng
+  volley: 14,         // số đạn vàng mỗi đợt (mưa đạn dày như Giga Wing)
+  spread: 1.45,       // độ toả quạt (~83°)
+  laserSpeed: 880,
+  comboPer: 25,       // điểm cộng mỗi viên đạn hút được trong lúc bật
 };
 
 // Two persistent player slots; activated when a controller (hand/mouse) maps to them.
@@ -223,7 +261,18 @@ function makePlayer(id, color) {
   return {
     id, color, active: false, x: W*0.5, y: H*0.7, tx: W*0.5, ty: H*0.7,
     weapon: 1, energy: 0, energyMax: 3, fireCd: 0, invuln: 0, seen: 0,
+    // reflect laser
+    reflectCharge: 0, reflecting: false, wantReflect: false, absorbed: 0,
+    reflectTimer: 0, fireLaserCd: 0,
   };
+}
+// Khi dính đạn: bất tử (không game over) nhưng TỤT 1 CẤP vũ khí (sàn Lv.1), giữ charge.
+function loseLevel(p) {
+  if (p.weapon > 1) p.weapon--;
+  p.energy = 0; p.energyMax = 2 + p.weapon; // ngưỡng năng lượng khớp cấp mới
+  p.invuln = 1.5;
+  game.shake = Math.max(game.shake, 14);
+  toast((p.id===0?"P1":"P2") + " −1 CẤP (Lv." + p.weapon + ")", p.color);
 }
 let players = [ makePlayer(0, "#38e8ff"), makePlayer(1, "#ff3d7f") ];
 
@@ -247,6 +296,27 @@ function toast(text, color) {
   el.textContent = text; el.style.color = color || "var(--gold)";
   el.style.transition = "none"; el.style.opacity = "1"; el.style.transform = "translateX(-50%) scale(1.2)";
   requestAnimationFrame(() => { el.style.transition = "opacity .9s, transform .9s"; el.style.opacity = "0"; el.style.transform = "translateX(-50%) scale(1)"; });
+}
+
+/* ----------------------------- Sprites ---------------------------------- */
+// Ảnh PNG nền trong suốt trong assets/. Thiếu file nào → tự vẽ bằng code (fallback).
+const SPRITES = {};
+function loadSprite(key, src) {
+  const img = new Image();
+  const rec = { img, ready: false, src };
+  img.onload = () => { rec.ready = true; };
+  img.onerror = () => { rec.ready = false; };
+  img.src = src;
+  SPRITES[key] = rec;
+}
+["player","drone","enemy-basic","enemy-shooter","enemy-tank","finalboss-core","finalboss-turret",
+ "boss_01","boss_02","boss_03","boss_04","boss_05","boss_06","boss_07","boss_08"]
+  .forEach(key => loadSprite(key, "assets/" + key + ".png"));
+function sprite(key) { const s = SPRITES[key]; return (s && s.ready) ? s.img : null; }
+function drawSpriteImg(img, x, y, size) {
+  const scale = size / Math.max(img.width, img.height); // giữ tỉ lệ, vẽ giữa tâm
+  const w = img.width*scale, h = img.height*scale;
+  ctx.drawImage(img, x - w/2, y - h/2, w, h);
 }
 
 /* ----------------------------- Weapons ---------------------------------- */
@@ -289,6 +359,42 @@ function firePlayer(p, dt) {
   }
 }
 
+/* ----------------------- Reflect Laser (skill 5s) ----------------------- */
+function updateReflect(p, dt) {
+  if (p.reflectTimer > 0) {
+    // ĐANG BẬT: bất tử + phun mưa đạn vàng khổng lồ (việc hút đạn xử lý ở pass va chạm)
+    p.reflectTimer -= dt;
+    p.fireLaserCd -= dt;
+    if (p.fireLaserCd <= 0) {
+      p.fireLaserCd = REFLECT.fireInterval;
+      for (let i = 0; i < REFLECT.volley; i++) {
+        const a = -Math.PI/2 + (i/(REFLECT.volley-1) - 0.5) * REFLECT.spread;
+        game.pBullets.push({ x: p.x + rand(-10,10), y: p.y-10, vx: Math.cos(a)*REFLECT.laserSpeed, vy: Math.sin(a)*REFLECT.laserSpeed, r: 9, dmg: 6, color:"#ffd23f", reflected:true });
+      }
+    }
+    if (p.reflectTimer <= 0) {
+      p.reflectTimer = 0; p.reflecting = false; p.reflectCharge = 0;
+      if (p.absorbed > 0) {
+        const bonus = p.absorbed * REFLECT.comboPer;
+        game.score += bonus;
+        toast((p.id===0?"P1":"P2") + " COMBO +" + bonus, "#ffd23f");
+        updateHUD();
+      }
+      p.absorbed = 0;
+    }
+    return;
+  }
+  // chưa bật: hồi charge thụ động
+  if (p.reflectCharge < REFLECT.max)
+    p.reflectCharge = Math.min(REFLECT.max, p.reflectCharge + REFLECT.regen*dt);
+  // nắm tay (hoặc Space) khi charge ĐẦY → kích hoạt 5 giây
+  if (p.wantReflect && p.reflectCharge >= REFLECT.max) {
+    p.reflectTimer = REFLECT.duration; p.reflecting = true; p.absorbed = 0; p.fireLaserCd = 0;
+    game.shake = Math.max(game.shake, 9); Sound.boss();
+    toast((p.id===0?"P1":"P2") + " ⚡ REFLECT LASER!", "#ffd23f");
+  }
+}
+
 /* ----------------------------- Enemies ---------------------------------- */
 function spawnEnemy(type) {
   const x = rand(60, W-60);
@@ -299,34 +405,65 @@ function spawnEnemy(type) {
 }
 function startLevel(lv) {
   game.level = lv;
-  document.getElementById("hud-level").textContent = lv;
-  if (lv % 3 === 0) { game.bossPending = true; game.waveLeft = 0; spawnBoss(); }
-  else {
-    game.bossPending = false;
-    const count = 6 + lv * 2;
-    game.waveLeft = count;
-    game.spawnQueue = [];
-    for (let i = 0; i < count; i++) {
-      const roll = Math.random();
-      let t = "basic";
-      if (lv >= 2 && roll > 0.78) t = "tank";
-      else if (roll > 0.5) t = "shooter";
-      game.spawnQueue.push(t);
-    }
-    game.spawnTimer = 0;
-    toast("MÀN " + lv, "#38e8ff");
-  }
+  document.getElementById("hud-level").textContent = lv + "/" + FINAL_LEVEL;
+  // Mỗi màn: cày lính liên tục ~STAGE_DURATION giây rồi BOSS mới xuất hiện.
+  game.bossPending = false;
+  game.bossQueued = false;
+  game.boss = null;
+  game.stageElapsed = 0;
+  game.spawnTimer = 0;
+  toast("MÀN " + lv, "#38e8ff");
+}
+// chọn loại lính: càng về cuối màn / màn cao → càng nhiều shooter & tank
+function rollEnemyType(lv, progress) {
+  const roll = Math.random();
+  if (lv >= 2 && roll > 0.86 - progress*0.25) return "tank";
+  if (roll > 0.55 - progress*0.25) return "shooter";
+  return "basic";
 }
 function spawnBoss() {
   Sound.boss();
-  const hp = 60 + game.level * 26;
-  game.boss = { x: W/2, y: -120, ty: 130, r: 70, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.2, pattern: 0, patternT: 0, entered:false };
+  const lv = game.level;
+  const hp = 1800 + lv * 700;          // SIÊU TRÂU — đánh lâu mới gục (chơi bất tử nên phải khó)
+  const r = Math.min(160, 96 + lv * 6); // phình to dần theo màn
+  game.boss = { x: W/2, y: -190, ty: 150, r, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.0, pattern: 0, patternT: 0, spin: 0, entered:false };
   document.getElementById("boss-wrap").classList.remove("hidden");
-  document.getElementById("boss-name").textContent = "⚠ TRÙM MÀN " + game.level + " ⚠";
+  document.getElementById("boss-name").textContent = "⚠ TRÙM MÀN " + lv + " ⚠";
   toast("TRÙM XUẤT HIỆN!", "#ff3d7f");
+}
+function spawnFinalBoss() {
+  Sound.boss();
+  const r = 140;
+  const hp = 9000; // máu core CỰC TRÂU; phải phá 2 pháo trước mới thủng được core
+  game.boss = {
+    x: W/2, y: -240, ty: 165, r, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.0, pattern: 0, patternT: 0, spin: 0, entered: false,
+    final: true, phase: 1,
+    parts: [
+      { ox: -r-6, oy: 10, hp: 900, hpMax: 900, alive: true, fireCd: rand(0.6, 1.6) },
+      { ox:  r+6, oy: 10, hp: 900, hpMax: 900, alive: true, fireCd: rand(0.6, 1.6) },
+    ],
+  };
+  document.getElementById("boss-wrap").classList.remove("hidden");
+  document.getElementById("boss-name").textContent = "☠ BOSS CUỐI ☠";
+  toast("BOSS CUỐI XUẤT HIỆN!", "#ff3d7f");
+}
+// xoá bớt đạn trên màn (khi chuyển phase) cho người chơi dễ thở
+function clearSomeBullets() {
+  game.eBullets = game.eBullets.filter((_, i) => i % 3 === 0);
 }
 
 /* ----------------------------- Input: hands ----------------------------- */
+// Nhận diện NẮM TAY: 4 đầu ngón (8,12,16,20) co lại gần lòng bàn tay.
+function isFist(lm) {
+  const wrist = lm[0];
+  const palm = Math.hypot(lm[9].x - wrist.x, lm[9].y - wrist.y) || 0.0001; // cỡ bàn tay
+  let curled = 0;
+  for (const tip of [8, 12, 16, 20]) {
+    const d = Math.hypot(lm[tip].x - wrist.x, lm[tip].y - wrist.y);
+    if (d < palm * 1.15) curled++; // ngón co lại → đầu ngón gần cổ tay cỡ lòng bàn tay
+  }
+  return curled >= 3;
+}
 function assignHand(label, lm) {
   // landmark 9 = middle finger MCP ≈ palm center
   const p = lm[9];
@@ -341,6 +478,7 @@ function assignHand(label, lm) {
   const idx = handMap[label];
   const pl = players[idx];
   pl.tx = clamp(x, 30, W-30); pl.ty = clamp(y, 30, H-30);
+  pl.wantReflect = isFist(lm); // ✊ nắm tay = muốn bật khiên
   pl.seen = 0.25; // seconds of "freshness"
 }
 function onHandResults(results) {
@@ -375,19 +513,25 @@ async function initCamera() {
 }
 
 /* ----------------------------- Mouse fallback --------------------------- */
+let mouseReflect = false; // giữ Space (hoặc giữ chuột) = bật khiên ở chế độ test
 window.addEventListener("mousemove", (e) => { if (mouseCtl) { mouseCtl.x = e.clientX; mouseCtl.y = e.clientY; } });
 window.addEventListener("touchmove", (e) => { if (mouseCtl && e.touches[0]) { mouseCtl.x = e.touches[0].clientX; mouseCtl.y = e.touches[0].clientY; } }, {passive:true});
+window.addEventListener("mousedown", () => { if (mouseCtl) mouseReflect = true; });
+window.addEventListener("mouseup", () => { mouseReflect = false; });
+window.addEventListener("keydown", (e) => { if (e.code === "Space") { e.preventDefault(); if (mouseCtl) mouseReflect = true; } });
+window.addEventListener("keyup", (e) => { if (e.code === "Space") mouseReflect = false; });
 
 /* ----------------------------- Game flow -------------------------------- */
 function beginGame() {
   state = STATE.PLAYING;
   game.score = 0; game.lives = 5; game.level = 1;
   game.enemies = []; game.pBullets = []; game.eBullets = []; game.orbs = []; game.particles = []; game.drones = [];
-  game.boss = null; game.bossPending = false; game.shake = 0;
+  game.boss = null; game.bossPending = false; game.bossQueued = false; game.shake = 0; game.stageElapsed = 0;
   players = [ makePlayer(0, "#38e8ff"), makePlayer(1, "#ff3d7f") ];
   for (const k in handMap) delete handMap[k];
   document.getElementById("menu").classList.add("hidden");
   document.getElementById("gameover").classList.add("hidden");
+  document.getElementById("victory").classList.add("hidden");
   document.getElementById("hud").classList.remove("hidden");
   document.getElementById("players").classList.remove("hidden");
   updateHUD();
@@ -406,13 +550,23 @@ function loseLife() {
   // GOD MODE: bất tử — chỉ rung + âm thanh, không mất mạng, không game over
   game.shake = 16; Sound.hurt();
 }
+function winGame() {
+  state = STATE.OVER;
+  document.getElementById("win-score").textContent = game.score;
+  document.getElementById("win-stages").textContent = FINAL_LEVEL;
+  document.getElementById("hud").classList.add("hidden");
+  document.getElementById("players").classList.add("hidden");
+  document.getElementById("boss-wrap").classList.add("hidden");
+  document.getElementById("victory").classList.remove("hidden");
+  Sound.levelup();
+}
 
 /* ----------------------------- Update ----------------------------------- */
 function update(dt) {
   if (state !== STATE.PLAYING) return;
 
   // ----- controllers -> players -----
-  if (mouseCtl) { const pl = players[0]; pl.tx = mouseCtl.x; pl.ty = mouseCtl.y; pl.seen = 0.25; }
+  if (mouseCtl) { const pl = players[0]; pl.tx = mouseCtl.x; pl.ty = mouseCtl.y; pl.wantReflect = mouseReflect; pl.seen = 0.25; }
   for (const p of players) {
     p.seen -= dt;
     p.active = p.seen > 0;
@@ -421,18 +575,24 @@ function update(dt) {
       p.y += (p.ty - p.y) * Math.min(1, dt*14);
       if (p.invuln > 0) p.invuln -= dt;
       firePlayer(p, dt);
+      updateReflect(p, dt);
+    } else if (p.reflectTimer > 0) {
+      p.reflectTimer = 0; p.reflecting = false; p.wantReflect = false;
     }
   }
   const anyActive = players.some(p => p.active);
 
-  // ----- enemy spawning -----
-  if (!game.bossPending && game.spawnQueue && game.spawnQueue.length) {
+  // ----- enemy spawning theo thời gian (cày ~STAGE_DURATION giây rồi mới tới boss) -----
+  if (!game.boss && !game.bossQueued) {
+    game.stageElapsed += dt;
+    const progress = Math.min(1, game.stageElapsed / STAGE_DURATION);
     game.spawnTimer -= dt;
     if (game.spawnTimer <= 0) {
-      game.spawnTimer = rand(0.45, 0.95);
-      const t = game.spawnQueue.shift();
-      game.enemies.push(spawnEnemy(t));
+      game.spawnTimer = rand(0.7, 1.15) - progress*0.45; // càng về cuối màn spawn càng dồn dập
+      const batch = 1 + (progress > 0.45 ? 1 : 0) + (progress > 0.8 ? 1 : 0);
+      for (let i = 0; i < batch; i++) game.enemies.push(spawnEnemy(rollEnemyType(game.level, progress)));
     }
+    if (game.stageElapsed >= STAGE_DURATION) { game.bossQueued = true; toast("BOSS SẮP TỚI!", "#ff3d7f"); }
   }
 
   // ----- player bullets -----
@@ -463,7 +623,7 @@ function update(dt) {
         game.eBullets.push({ x:e.x, y:e.y, vx:Math.cos(ang)*240, vy:Math.sin(ang)*240, r:6, color:"#ffec6b" });
       }
     }
-    if (e.y > H + 40) { e._gone = true; loseLife(); }
+    if (e.y > H + 40) { e._gone = true; } // lính thoát đáy: biến mất im lặng (đỡ rung/kêu khi cày dài)
   }
 
   // ----- boss -----
@@ -472,6 +632,20 @@ function update(dt) {
   // ----- enemy bullets -----
   for (const b of game.eBullets) { b.x += b.vx*dt; b.y += b.vy*dt; }
   game.eBullets = game.eBullets.filter(b => b.y > -30 && b.y < H+30 && b.x > -30 && b.x < W+30);
+
+  // ----- reflect laser hút đạn địch (đếm combo) -----
+  for (const b of game.eBullets) {
+    if (b._dead) continue;
+    for (const p of players) {
+      if (!p.active || !p.reflecting) continue;
+      if (dist2(b.x,b.y,p.x,p.y) < REFLECT.radius*REFLECT.radius) {
+        b._dead = true; p.absorbed++;
+        addParticles(b.x, b.y, "#ffd23f", 3, 160);
+        break;
+      }
+    }
+  }
+  game.eBullets = game.eBullets.filter(b => !b._dead);
 
   // ----- orbs -----
   for (const o of game.orbs) {
@@ -495,9 +669,27 @@ function update(dt) {
     if (b._dead) continue;
     if (game.boss && !game.boss._dead && game.boss.entered) {
       const bs = game.boss;
-      if (dist2(b.x,b.y,bs.x,bs.y) < (bs.r+b.r)*(bs.r+b.r)) {
-        bs.hp -= b.dmg; b._dead = true; addParticles(b.x,b.y,"#ff9d3d",4,160);
-        if (bs.hp <= 0) killBoss();
+      if (bs.final) {
+        // ưu tiên trúng pháo phụ khi còn sống
+        let hitPart = false;
+        for (const part of bs.parts) {
+          if (!part.alive) continue;
+          const px = bs.x + part.ox, py = bs.y + part.oy;
+          if (dist2(b.x,b.y,px,py) < (32+b.r)*(32+b.r)) {
+            part.hp -= b.dmg; b._dead = true; addParticles(b.x,b.y,"#ffd23f",4,180);
+            if (part.hp <= 0) { part.alive = false; addParticles(px,py,"#ff9d3d",26,320); Sound.boom(); game.score += 200; game.shake = Math.max(game.shake,12); }
+            hitPart = true; break;
+          }
+        }
+        if (!hitPart && dist2(b.x,b.y,bs.x,bs.y) < (bs.r+b.r)*(bs.r+b.r)) {
+          b._dead = true; addParticles(b.x,b.y,"#ff9d3d",4,160);
+          if (bs.phase >= 2) { bs.hp -= b.dmg; if (bs.hp <= 0) killBoss(); } // core chỉ thủng khi đã phá pháo
+        }
+      } else {
+        if (dist2(b.x,b.y,bs.x,bs.y) < (bs.r+b.r)*(bs.r+b.r)) {
+          bs.hp -= b.dmg; b._dead = true; addParticles(b.x,b.y,"#ff9d3d",4,160);
+          if (bs.hp <= 0) killBoss();
+        }
       }
     }
   }
@@ -507,20 +699,32 @@ function update(dt) {
   // ----- collisions: enemy bullets vs players -----
   for (const b of game.eBullets) {
     for (const p of players) {
-      if (!p.active || p.invuln > 0) continue;
-      if (dist2(b.x,b.y,p.x,p.y) < (26+b.r)*(26+b.r)) {
-        b._dead = true; p.invuln = 1.5; addParticles(p.x,p.y,p.color,16,240); loseLife();
+      if (!p.active || p.invuln > 0 || p.reflecting) continue;
+      if (dist2(b.x,b.y,p.x,p.y) < (PLAYER_HITBOX+b.r)*(PLAYER_HITBOX+b.r)) {
+        b._dead = true; addParticles(p.x,p.y,p.color,20,260); loseLife(); loseLevel(p);
       }
     }
   }
   game.eBullets = game.eBullets.filter(b => !b._dead);
 
+  // ----- reflect barrier nghiền lính địch chạm khiên (không tính boss) -----
+  for (const p of players) {
+    if (!p.active || !p.reflecting) continue;
+    for (const e of game.enemies) {
+      if (e._gone) continue;
+      if (dist2(e.x,e.y,p.x,p.y) < (REFLECT.radius+e.r)*(REFLECT.radius+e.r)) {
+        addParticles(e.x,e.y,e.color,10,200); killEnemy(e, true); p.absorbed++;
+      }
+    }
+  }
+  game.enemies = game.enemies.filter(e => !e._gone);
+
   // ----- collisions: enemies body vs players -----
   for (const e of game.enemies) {
     for (const p of players) {
-      if (!p.active || p.invuln > 0) continue;
-      if (dist2(e.x,e.y,p.x,p.y) < (e.r+24)*(e.r+24)) {
-        p.invuln = 1.5; addParticles(p.x,p.y,p.color,16,240); killEnemy(e, true); loseLife();
+      if (!p.active || p.invuln > 0 || p.reflecting) continue;
+      if (dist2(e.x,e.y,p.x,p.y) < (e.r+PLAYER_HITBOX)*(e.r+PLAYER_HITBOX)) {
+        addParticles(p.x,p.y,p.color,20,260); killEnemy(e, true); loseLife(); loseLevel(p);
       }
     }
   }
@@ -541,12 +745,17 @@ function update(dt) {
   for (const pt of game.particles) { pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vx*=0.94; pt.vy*=0.94; pt.life -= dt; }
   game.particles = game.particles.filter(pt => pt.life > 0);
 
-  // ----- level clear check -----
-  if (!game.bossPending && (!game.spawnQueue || game.spawnQueue.length === 0) && game.enemies.length === 0) {
-    game.levelClearTimer += dt;
-    if (game.levelClearTimer > 1.2) { game.levelClearTimer = 0; startLevel(game.level + 1); }
-  } else {
-    game.levelClearTimer = 0;
+  // ----- hết giờ cày + sạch lính → triệu hồi boss (hạ boss mới sang màn sau, trong killBoss) -----
+  if (game.bossQueued && !game.boss) {
+    if (game.enemies.length === 0) {
+      game.levelClearTimer += dt;
+      if (game.levelClearTimer > 0.8) {
+        game.levelClearTimer = 0; game.bossQueued = false;
+        if (game.level >= FINAL_LEVEL) spawnFinalBoss(); else spawnBoss();
+      }
+    } else {
+      game.levelClearTimer = 0;
+    }
   }
 
   if (game.shake > 0) game.shake -= dt*40;
@@ -566,19 +775,25 @@ function killEnemy(e, silent) {
 }
 function killBoss() {
   const bs = game.boss; bs._dead = true;
-  game.score += 500 + game.level*100;
-  for (let i=0;i<6;i++) setTimeout(()=>{ addParticles(bs.x+rand(-50,50), bs.y+rand(-40,40), "#ffd23f", 20, 300); Sound.boom(); }, i*90);
+  const wasFinal = bs.final;
+  game.score += (wasFinal ? 3000 : 500) + game.level*100;
+  const blasts = wasFinal ? 16 : 6;
+  for (let i=0;i<blasts;i++) setTimeout(()=>{ addParticles(bs.x+rand(-70,70), bs.y+rand(-60,60), "#ffd23f", 22, 320); Sound.boom(); }, i*90);
   // shower of orbs
   for (let i=0;i<6;i++) game.orbs.push({ x:bs.x+rand(-60,60), y:bs.y, vy:rand(20,60), r:11, t:0 });
   game.boss = null; game.bossPending = false;
   document.getElementById("boss-wrap").classList.add("hidden");
-  game.shake = 20; toast("HẠ TRÙM! +" + (500+game.level*100), "#ffd23f");
+  game.shake = wasFinal ? 30 : 20;
+  toast(wasFinal ? "ĐÃ HẠ BOSS CUỐI!" : ("HẠ TRÙM! +" + (500+game.level*100)), "#ffd23f");
   updateHUD();
-  game.levelClearTimer = 0; setTimeout(()=>{ if (state===STATE.PLAYING) startLevel(game.level+1); }, 1400);
+  game.levelClearTimer = 0;
+  if (wasFinal) setTimeout(()=>{ if (state===STATE.PLAYING) winGame(); }, 1600);
+  else setTimeout(()=>{ if (state===STATE.PLAYING) startLevel(game.level+1); }, 1400);
 }
 function collectEnergy(p) {
   Sound.power(); game.score += 5;
   p.energy += 2; // mỗi viên +2 năng lượng → lên cấp nhanh
+  p.reflectCharge = Math.min(REFLECT.max, p.reflectCharge + REFLECT.orbGain); // nạp khiên
   addParticles(p.x, p.y, "#5cff8f", 10, 180);
   while (p.energy >= p.energyMax) {
     p.energy -= p.energyMax;
@@ -591,6 +806,7 @@ function collectEnergy(p) {
 }
 
 /* ----------------------------- Boss AI ---------------------------------- */
+const EB_CAP = 620; // trần số đạn địch trên màn để giữ FPS (bullet hell vẫn mượt)
 function updateBoss(dt, anyActive) {
   const bs = game.boss; bs.t += dt;
   if (!bs.entered) {
@@ -598,34 +814,122 @@ function updateBoss(dt, anyActive) {
     if (Math.abs(bs.y - bs.ty) < 4) bs.entered = true;
     return;
   }
-  bs.x += bs.dir * 70 * dt;
-  if (bs.x < bs.r+20) { bs.x = bs.r+20; bs.dir = 1; }
-  if (bs.x > W-bs.r-20) { bs.x = W-bs.r-20; bs.dir = -1; }
+  bs.x += bs.dir * 64 * dt;
+  if (bs.x < bs.r+10) { bs.x = bs.r+10; bs.dir = 1; }
+  if (bs.x > W-bs.r-10) { bs.x = W-bs.r-10; bs.dir = -1; }
+  document.querySelector("#boss-bar > i").style.width = (100*Math.max(0,bs.hp)/bs.hpMax) + "%";
 
-  bs.fireCd -= dt;
+  if (bs.final) { updateFinalBoss(dt, anyActive); return; }
+
+  // luân phiên 4 kiểu tấn công, mỗi kiểu 6 giây
   bs.patternT += dt;
-  if (bs.patternT > 5) { bs.patternT = 0; bs.pattern = (bs.pattern+1) % 3; }
-  if (bs.fireCd <= 0 && anyActive) {
-    if (bs.pattern === 0) { // radial burst
-      bs.fireCd = 1.6;
-      const n = 14;
-      for (let i=0;i<n;i++){ const a = (i/n)*Math.PI*2; game.eBullets.push({x:bs.x,y:bs.y,vx:Math.cos(a)*180,vy:Math.sin(a)*180,r:6,color:"#ff6bd6"}); }
-    } else if (bs.pattern === 1) { // aimed triple
-      bs.fireCd = 0.7;
-      const t = players.find(p=>p.active); if (t){ const base=Math.atan2(t.y-bs.y,t.x-bs.x);
-        for (const off of [-0.2,0,0.2]) game.eBullets.push({x:bs.x,y:bs.y,vx:Math.cos(base+off)*300,vy:Math.sin(base+off)*300,r:6,color:"#ffec6b"}); }
-    } else { // downward rain
-      bs.fireCd = 0.35;
-      const x = rand(60,W-60);
-      game.eBullets.push({x, y:bs.y, vx:0, vy:260, r:6, color:"#ff9d3d"});
+  if (bs.patternT > 6) { bs.patternT = 0; bs.pattern = (bs.pattern+1) % 4; }
+
+  if (!anyActive || game.eBullets.length > EB_CAP) return;
+  bs.fireCd -= dt;
+  if (bs.fireCd > 0) return;
+
+  if (bs.pattern === 0) {
+    // XOẮN ỐC: phun liên tục theo góc xoay dần
+    bs.fireCd = 0.05;
+    bs.spin += 0.42;
+    const arms = 3;
+    for (let k = 0; k < arms; k++) {
+      const a = bs.spin + k * (Math.PI*2/arms);
+      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*215, vy:Math.sin(a)*215, r:7, color:"#ff6bd6" });
+    }
+  } else if (bs.pattern === 1) {
+    // HOA NỞ: nhả nguyên vòng tròn, lệch dần từng đợt
+    bs.fireCd = 0.9;
+    const n = 26, off = bs.t*0.6;
+    for (let i = 0; i < n; i++) {
+      const a = off + (i/n)*Math.PI*2;
+      game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*172, vy:Math.sin(a)*172, r:7, color:"#9d7bff" });
+    }
+  } else if (bs.pattern === 2) {
+    // TƯỜNG ĐẠN NGẮM: quạt rộng nhắm người chơi gần nhất
+    bs.fireCd = 0.55;
+    const target = players.find(p=>p.active);
+    if (target) {
+      const base = Math.atan2(target.y-bs.y, target.x-bs.x);
+      for (let i = -5; i <= 5; i++) {
+        const a = base + i*0.12;
+        game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*285, vy:Math.sin(a)*285, r:6, color:"#ffec6b" });
+      }
+    }
+  } else {
+    // MƯA RÈM: rải đạn rơi dọc khắp bề ngang
+    bs.fireCd = 0.1;
+    for (let i = 0; i < 3; i++) {
+      const x = rand(40, W-40);
+      game.eBullets.push({ x, y: bs.y, vx: rand(-30,30), vy: rand(220,300), r:6, color:"#ff9d3d" });
     }
   }
-  document.querySelector("#boss-bar > i").style.width = (100*Math.max(0,bs.hp)/bs.hpMax) + "%";
+}
+
+/* --------------------------- Final boss AI ------------------------------ */
+function updateFinalBoss(dt, anyActive) {
+  const bs = game.boss;
+
+  // chuyển phase
+  if (bs.phase === 1 && bs.parts.every(part => !part.alive)) {
+    bs.phase = 2; clearSomeBullets(); game.shake = 20; Sound.boss();
+    toast("PHÁ PHÁO! CORE LỘ DIỆN!", "#ffd23f");
+  }
+  if (bs.phase === 2 && bs.hp < bs.hpMax*0.3) {
+    bs.phase = 3; clearSomeBullets(); game.shake = 26; Sound.boss();
+    toast("⚠ BOSS CUỐI NỔI ĐIÊN! ⚠", "#ff3d7f");
+  }
+
+  // pháo phụ bắn ngắm (phase 1, khi còn sống)
+  if (bs.phase === 1) {
+    for (const part of bs.parts) {
+      if (!part.alive) continue;
+      part.fireCd -= dt;
+      if (part.fireCd <= 0 && anyActive && game.eBullets.length < EB_CAP) {
+        part.fireCd = 1.1;
+        const px = bs.x+part.ox, py = bs.y+part.oy;
+        const target = players.find(p=>p.active);
+        if (target) {
+          const base = Math.atan2(target.y-py, target.x-px);
+          for (const off of [-0.18,0,0.18]) game.eBullets.push({ x:px, y:py, vx:Math.cos(base+off)*270, vy:Math.sin(base+off)*270, r:6, color:"#ffec6b" });
+        }
+      }
+    }
+  }
+
+  if (!anyActive || game.eBullets.length > EB_CAP) return;
+  bs.fireCd -= dt;
+  if (bs.fireCd > 0) return;
+
+  if (bs.phase === 1) {
+    // vòng tròn lệch chậm (vừa phải, lo phá pháo trước)
+    bs.fireCd = 1.0;
+    const n = 22, off = bs.t*0.5;
+    for (let i=0;i<n;i++){ const a = off + (i/n)*Math.PI*2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*160, vy:Math.sin(a)*160, r:7, color:"#9d7bff" }); }
+  } else if (bs.phase === 2) {
+    // xoắn ốc kép
+    bs.fireCd = 0.05; bs.spin += 0.5;
+    for (let k=0;k<2;k++){ const a = bs.spin + k*Math.PI; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*225, vy:Math.sin(a)*225, r:7, color:"#ff6bd6" }); }
+  } else {
+    // PHASE 3 nổi điên: xoắn 4 cánh nhanh + mưa rèm
+    bs.fireCd = 0.04; bs.spin += 0.62;
+    for (let k=0;k<4;k++){ const a = bs.spin + k*Math.PI/2; game.eBullets.push({ x:bs.x, y:bs.y, vx:Math.cos(a)*255, vy:Math.sin(a)*255, r:7, color:"#ff2d2d" }); }
+    if (Math.random() < 0.5) { const x = rand(40,W-40); game.eBullets.push({ x, y:bs.y, vx:0, vy:300, r:6, color:"#ff9d3d" }); }
+  }
 }
 
 /* ----------------------------- Render ----------------------------------- */
 function drawShip(p) {
   const blink = p.invuln > 0 && (Math.floor(p.invuln*12)%2===0);
+  const img = sprite("player");
+  if (img) {
+    ctx.save(); if (blink) ctx.globalAlpha = 0.35;
+    if (p.reflecting) { ctx.shadowColor = "#ffd23f"; ctx.shadowBlur = 22; }
+    drawSpriteImg(img, p.x, p.y, 60);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.translate(p.x, p.y);
   if (blink) ctx.globalAlpha = 0.35;
@@ -644,11 +948,15 @@ function drawShip(p) {
   ctx.restore();
 }
 function drawDrone(d, color) {
+  const img = sprite("drone");
+  if (img) { drawSpriteImg(img, d.x, d.y, 26); return; }
   ctx.save(); ctx.translate(d.x,d.y); ctx.shadowColor=color; ctx.shadowBlur=10;
   ctx.fillStyle = color; ctx.fillRect(-7,-7,14,14);
   ctx.fillStyle = "#04121a"; ctx.fillRect(-3,-3,6,6); ctx.restore();
 }
 function drawEnemy(e) {
+  const img = sprite("enemy-" + e.type);
+  if (img) { drawSpriteImg(img, e.x, e.y, e.r*2.3); return; }
   ctx.save(); ctx.translate(e.x, e.y); ctx.shadowColor=e.color; ctx.shadowBlur=12; ctx.fillStyle=e.color;
   if (e.type === "tank") {
     ctx.fillRect(-e.r,-e.r*0.6,e.r*2,e.r*1.2);
@@ -662,6 +970,9 @@ function drawEnemy(e) {
   ctx.restore();
 }
 function drawBoss(bs) {
+  // mỗi màn 1 ảnh boss riêng: boss_01..boss_06 (ảnh ngang nên vẽ to theo bề rộng)
+  const img = sprite("boss_0" + Math.min(6, Math.max(1, game.level))) || sprite("boss-normal");
+  if (img) { ctx.save(); ctx.shadowColor="#ff3d7f"; ctx.shadowBlur=24; drawSpriteImg(img, bs.x, bs.y, bs.r*3.0); ctx.restore(); return; }
   ctx.save(); ctx.translate(bs.x, bs.y); ctx.shadowColor="#ff3d7f"; ctx.shadowBlur=24;
   ctx.fillStyle="#ff3d7f";
   ctx.beginPath(); ctx.ellipse(0,0,bs.r,bs.r*0.7,0,0,6.28); ctx.fill();
@@ -670,6 +981,40 @@ function drawBoss(bs) {
   // side cannons
   ctx.fillStyle="#ff9d3d"; ctx.fillRect(-bs.r,-8,16,16); ctx.fillRect(bs.r-16,-8,16,16);
   ctx.restore();
+}
+function drawFinalBoss(bs) {
+  const coreColor = bs.phase >= 3 ? "#ff2d2d" : bs.phase === 2 ? "#ff6bd6" : "#b06bff";
+  // core: boss_07 bình thường, đổi sang boss_08 khi NỔI ĐIÊN (phase 3)
+  const coreImg = sprite(bs.phase >= 3 ? "boss_08" : "boss_07") || sprite("finalboss-core");
+  if (coreImg) {
+    ctx.save(); ctx.shadowColor = coreColor; ctx.shadowBlur = 34; drawSpriteImg(coreImg, bs.x, bs.y, bs.r*3.4); ctx.restore();
+  } else {
+    ctx.save(); ctx.translate(bs.x, bs.y); ctx.shadowColor = coreColor; ctx.shadowBlur = 32;
+    ctx.fillStyle = "#ff3d7f"; ctx.beginPath(); ctx.ellipse(0,0,bs.r,bs.r*0.82,0,0,6.28); ctx.fill();
+    ctx.fillStyle = coreColor; ctx.beginPath(); ctx.ellipse(0,0,bs.r*0.62,bs.r*0.5,0,0,6.28); ctx.fill();
+    ctx.fillStyle = "#2a0e2a"; ctx.beginPath(); ctx.arc(0,0,bs.r*0.34,0,6.28); ctx.fill();
+    ctx.fillStyle = bs.phase >= 2 ? "#fff" : "#ff9d3d"; ctx.shadowBlur = bs.phase>=2 ? 24 : 10;
+    ctx.beginPath(); ctx.arc(0,0,bs.r*0.18,0,6.28); ctx.fill();
+    ctx.restore();
+  }
+  // pháo phụ (parts) còn sống + thanh máu nhỏ
+  const turretImg = sprite("finalboss-turret");
+  for (const part of bs.parts) {
+    if (!part.alive) continue;
+    const px = bs.x + part.ox, py = bs.y + part.oy;
+    if (turretImg) {
+      ctx.save(); ctx.shadowColor = "#ffd23f"; ctx.shadowBlur = 16; drawSpriteImg(turretImg, px, py, 70); ctx.restore();
+    } else {
+      ctx.save(); ctx.translate(px, py); ctx.shadowColor = "#ffd23f"; ctx.shadowBlur = 16;
+      ctx.fillStyle = "#ff9d3d"; ctx.beginPath(); ctx.arc(0,0,28,0,6.28); ctx.fill();
+      ctx.fillStyle = "#2a0e2a"; ctx.beginPath(); ctx.arc(0,0,13,0,6.28); ctx.fill();
+      ctx.fillStyle = "#ffec6b"; ctx.beginPath(); ctx.arc(0,0,6,0,6.28); ctx.fill();
+      ctx.restore();
+    }
+    // thanh máu pháo
+    ctx.save(); ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(px-26,py-40,52,6);
+    ctx.fillStyle = "#5cff8f"; ctx.fillRect(px-26,py-40,52*Math.max(0,part.hp)/part.hpMax,6); ctx.restore();
+  }
 }
 
 function render() {
@@ -705,16 +1050,77 @@ function render() {
     }
     // enemies
     for (const e of game.enemies) drawEnemy(e);
-    if (game.boss) drawBoss(game.boss);
-    // bullets
-    for (const b of game.pBullets) { ctx.save(); ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.fillStyle=b.color;
-      ctx.fillRect(b.x-2, b.y-7, 4, 14); ctx.restore(); }
-    for (const b of game.eBullets) { ctx.save(); ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.fillStyle=b.color;
-      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,6.28); ctx.fill(); ctx.restore(); }
+    if (game.boss) { if (game.boss.final) drawFinalBoss(game.boss); else drawBoss(game.boss); }
+    // player bullets (đạn thường + đạn PHẢN vàng to)
+    ctx.shadowBlur = 0;
+    for (const b of game.pBullets) {
+      if (b.reflected) {
+        ctx.fillStyle = "#ffd23f";
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.28); ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r*0.45, 0, 6.28); ctx.fill();
+      } else {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x-2, b.y-7, 4, 14);
+      }
+    }
+    // enemy bullets — bullet hell: vẽ tối giản (vòng màu + lõi trắng), KHÔNG shadowBlur để giữ FPS
+    for (const b of game.eBullets) {
+      ctx.fillStyle = b.color;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.28); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r*0.42, 0, 6.28); ctx.fill();
+    }
     // drones
     for (const d of game.drones) drawDrone(d, players[d.owner].color);
     // ships
-    for (const p of players) if (p.active) drawShip(p);
+    for (const p of players) if (p.active) {
+      drawShip(p);
+      // chấm CHÍ MẠNG ở tâm = hitbox thật (đạn chỉ giết khi chạm chấm này)
+      ctx.save();
+      ctx.shadowColor = "#fff"; ctx.shadowBlur = 12; ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 6.28); ctx.fill();
+      ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, 1.6, 0, 6.28); ctx.fill();
+      ctx.restore();
+    }
+    // reflect barrier (khiên Giga Wing)
+    const barrierPulse = performance.now()*0.012;
+    for (const p of players) {
+      if (!p.active || !p.reflecting) continue;
+      // ☄ CỘT TIA VÀNG khổng lồ (tuyệt chiêu Reflect Laser kiểu Giga Wing)
+      const tt = performance.now()*0.001;
+      const beamW = 168;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter"; // cộng sáng → rực như lửa
+      const grad = ctx.createLinearGradient(p.x-beamW/2, 0, p.x+beamW/2, 0);
+      grad.addColorStop(0.0, "rgba(255,110,0,0)");
+      grad.addColorStop(0.25, "rgba(255,170,30,0.55)");
+      grad.addColorStop(0.5, "rgba(255,245,170,0.92)");
+      grad.addColorStop(0.75, "rgba(255,170,30,0.55)");
+      grad.addColorStop(1.0, "rgba(255,110,0,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(p.x-beamW/2, 0, beamW, p.y);
+      // sọc chéo xoáy chạy lên trên
+      ctx.beginPath(); ctx.rect(p.x-beamW/2, 0, beamW, p.y); ctx.clip();
+      ctx.strokeStyle = "rgba(255,80,0,0.45)"; ctx.lineWidth = 11;
+      const gap = 36, off = (tt*200) % gap;
+      for (let yy = p.y + beamW; yy > -gap; yy -= gap) {
+        const yb = yy - off;
+        ctx.beginPath(); ctx.moveTo(p.x-beamW/2, yb); ctx.lineTo(p.x+beamW/2, yb - beamW); ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.globalAlpha = 0.10; ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, REFLECT.radius, 0, 6.28); ctx.fill();
+      ctx.globalAlpha = 0.6 + 0.25*Math.sin(barrierPulse*6);
+      ctx.lineWidth = 4; ctx.strokeStyle = p.color; ctx.shadowColor = p.color; ctx.shadowBlur = 22;
+      ctx.beginPath(); ctx.arc(p.x, p.y, REFLECT.radius, 0, 6.28); ctx.stroke();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px 'Courier New', monospace"; ctx.textAlign = "center";
+      ctx.fillText("✊ " + p.absorbed, p.x, p.y - REFLECT.radius - 8);
+      ctx.restore();
+    }
     // particles
     for (const pt of game.particles) {
       ctx.globalAlpha = Math.max(0, pt.life/pt.max); ctx.fillStyle=pt.color;
@@ -727,7 +1133,7 @@ function render() {
 /* ----------------------------- HUD sync --------------------------------- */
 function updateHUD() {
   document.getElementById("hud-score").textContent = game.score;
-  document.getElementById("hud-level").textContent = game.level;
+  document.getElementById("hud-level").textContent = game.level + "/" + FINAL_LEVEL;
   document.getElementById("hud-lives").textContent = "∞";
 }
 function updatePlayerCards() {
@@ -737,7 +1143,26 @@ function updatePlayerCards() {
     card.classList.toggle("off", !p.active);
     document.getElementById("w"+(i+1)).textContent = "Lv." + p.weapon + (p.weapon>=5 ? " +Lính" : "");
     document.getElementById("e"+(i+1)).style.width = (100*p.energy/p.energyMax) + "%";
+    // thanh laser reflect + trạng thái
+    const rbar = document.getElementById("rbar"+(i+1));
+    document.getElementById("r"+(i+1)).style.width = (100*p.reflectCharge/REFLECT.max) + "%";
+    const ready = p.reflectCharge >= REFLECT.max;
+    rbar.classList.toggle("ready", ready && !p.reflecting);
+    const combo = document.getElementById("c"+(i+1));
+    if (p.reflecting) { combo.textContent = "⚡ LASER " + p.reflectTimer.toFixed(1) + "s"; combo.style.color = "var(--gold)"; }
+    else if (ready) { combo.textContent = "SẴN SÀNG ✊"; combo.style.color = "var(--gold)"; }
+    else { combo.textContent = "đang nạp…"; combo.style.color = "#7f91b0"; }
   });
+
+  // đồng hồ đếm ngược tới boss
+  const eta = document.getElementById("boss-eta");
+  if (game.boss) eta.textContent = "ĐANG ĐÁNH";
+  else if (game.bossQueued) eta.textContent = "SẮP TỚI!";
+  else {
+    const remain = Math.max(0, STAGE_DURATION - game.stageElapsed);
+    const m = Math.floor(remain/60), s = Math.floor(remain%60);
+    eta.textContent = m + ":" + (s<10?"0":"") + s;
+  }
 }
 
 /* ----------------------------- Main loop -------------------------------- */
@@ -756,9 +1181,11 @@ document.getElementById("btn-cam").addEventListener("click", () => { Sound.init(
 document.getElementById("btn-mouse").addEventListener("click", () => {
   Sound.init(); useCamera = false; mouseCtl = { x: W/2, y: H*0.7 }; beginGame();
 });
-document.getElementById("btn-again").addEventListener("click", () => {
+function restartGame() {
   if (useCamera) beginGame(); else { mouseCtl = { x:W/2, y:H*0.7 }; beginGame(); }
-});
+}
+document.getElementById("btn-again").addEventListener("click", restartGame);
+document.getElementById("btn-again2").addEventListener("click", restartGame);
 </script>
 </body>
 </html>
