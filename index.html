@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>SKY HUNTER AI — Co-op bằng tay qua camera</title>
+<style>
+  :root { --neon: #38e8ff; --neon2: #ff3d7f; --gold: #ffd23f; --green: #5cff8f; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05060c; font-family: "Courier New", monospace; color: #fff; }
+  #stage { position: fixed; inset: 0; }
+  video { display: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  /* scanline retro overlay */
+  #scanlines { position: absolute; inset: 0; pointer-events: none; z-index: 5;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 2px, transparent 3px);
+    mix-blend-mode: multiply; opacity: 0.5; }
+
+  /* ---------- Overlays (menu / gameover) ---------- */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(circle at 50% 40%, rgba(10,14,30,0.78), rgba(2,3,8,0.94)); }
+  .hidden { display: none !important; }
+  .title { font-size: clamp(34px, 7vw, 78px); font-weight: 900; letter-spacing: 6px;
+    color: var(--neon); text-shadow: 0 0 12px var(--neon), 0 0 30px rgba(56,232,255,.6); }
+  .title small { display:block; font-size: clamp(12px,2.2vw,20px); letter-spacing: 8px; color: var(--neon2);
+    text-shadow: 0 0 10px var(--neon2); margin-top: 6px; }
+  .sub { margin-top: 18px; max-width: 640px; line-height: 1.7; color: #cfe9ff; font-size: clamp(13px,1.6vw,16px); }
+  .sub b { color: var(--gold); }
+  .btns { margin-top: 34px; display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  button.cta { cursor: pointer; font-family: inherit; font-weight: 800; letter-spacing: 2px;
+    font-size: clamp(15px,2vw,20px); padding: 16px 30px; border-radius: 10px; color: #04121a;
+    background: linear-gradient(180deg, #8af6ff, var(--neon)); border: none;
+    box-shadow: 0 0 20px rgba(56,232,255,.6), inset 0 0 8px rgba(255,255,255,.4); transition: transform .08s; }
+  button.cta.alt { background: linear-gradient(180deg, #2a3350, #161c2e); color: #bfe9ff;
+    box-shadow: 0 0 12px rgba(56,232,255,.25); }
+  button.cta:hover { transform: translateY(-2px) scale(1.03); }
+  button.cta:active { transform: translateY(1px) scale(.98); }
+  .loading { margin-top: 22px; color: var(--gold); letter-spacing: 2px; font-size: 14px; }
+  .hint { position:absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+    color: #6f86a8; font-size: 12px; letter-spacing: 1px; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: absolute; top: 0; left: 0; right: 0; z-index: 8; pointer-events: none;
+    display: flex; align-items: flex-start; justify-content: space-between; padding: 14px 18px; }
+  .hud-center { text-align:center; }
+  .badge { display:inline-flex; align-items:center; gap:10px; background: rgba(6,12,24,.62);
+    border:1px solid rgba(56,232,255,.35); border-radius: 8px; padding: 6px 14px;
+    box-shadow: 0 0 14px rgba(56,232,255,.18); }
+  .badge .lbl { color:#7fd6ff; font-size: 11px; letter-spacing: 2px; }
+  .badge .val { color:#fff; font-weight: 800; font-size: 16px; letter-spacing: 1px; }
+  .score .val { color: var(--gold); text-shadow: 0 0 8px rgba(255,210,63,.6); }
+  .lives .val { color: var(--neon2); letter-spacing: 2px; }
+  .title-mini { color: var(--neon); font-weight: 900; letter-spacing: 4px; font-size: 14px;
+    text-shadow: 0 0 8px var(--neon); }
+
+  /* player panels bottom */
+  #players { position:absolute; bottom: 12px; left: 0; right: 0; z-index: 8; pointer-events:none;
+    display:flex; justify-content: space-between; padding: 0 16px; gap: 12px; }
+  .pcard { min-width: 190px; background: rgba(6,12,24,.6); border-radius: 10px; padding: 8px 12px;
+    border:1px solid rgba(255,255,255,.12); }
+  .pcard.p1 { border-color: var(--neon); box-shadow: 0 0 14px rgba(56,232,255,.25); }
+  .pcard.p2 { border-color: var(--neon2); box-shadow: 0 0 14px rgba(255,61,127,.25); }
+  .pcard .name { font-size: 12px; letter-spacing: 2px; font-weight: 800; margin-bottom: 6px; }
+  .pcard.p1 .name { color: var(--neon); }
+  .pcard.p2 .name { color: var(--neon2); }
+  .pcard .row { display:flex; align-items:center; justify-content: space-between; font-size: 11px; color:#bcd; }
+  .ebar { height: 8px; border-radius: 6px; background: rgba(255,255,255,.12); overflow:hidden; margin-top: 6px; }
+  .ebar > i { display:block; height:100%; width:0%; background: linear-gradient(90deg,var(--green),var(--gold)); transition: width .12s; }
+  .pcard.off { opacity: .4; }
+  .wlvl { color: var(--gold); font-weight: 800; }
+
+  #boss-wrap { position:absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 8;
+    width: min(560px, 80vw); pointer-events:none; }
+  #boss-bar { height: 12px; border-radius: 7px; background: rgba(0,0,0,.5); border:1px solid var(--neon2); overflow:hidden; }
+  #boss-bar > i { display:block; height:100%; width:100%; background: linear-gradient(90deg,#ff3d7f,#ff9d3d); }
+  #boss-name { text-align:center; color:var(--neon2); letter-spacing:3px; font-weight:800; font-size:13px; margin-bottom:4px;
+    text-shadow:0 0 8px var(--neon2); }
+  .toast { position:absolute; top: 38%; left:50%; transform: translateX(-50%); z-index: 9;
+    font-size: clamp(22px,4vw,44px); font-weight:900; letter-spacing:4px; color: var(--gold);
+    text-shadow:0 0 14px rgba(255,210,63,.8); opacity:0; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="cam" playsinline></video>
+  <canvas id="game"></canvas>
+  <div id="scanlines"></div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="badge lives"><span class="lbl">MẠNG</span><span class="val" id="hud-lives">♥♥♥♥♥</span></div>
+    <div class="hud-center">
+      <div class="title-mini">★ SKY HUNTER AI ★</div>
+      <div class="badge" style="margin-top:6px"><span class="lbl">LEVEL</span><span class="val" id="hud-level">1</span></div>
+    </div>
+    <div class="badge score"><span class="lbl">ĐIỂM</span><span class="val" id="hud-score">0</span></div>
+  </div>
+
+  <div id="boss-wrap" class="hidden">
+    <div id="boss-name">⚠ TRÙM ĐỊCH ⚠</div>
+    <div id="boss-bar"><i></i></div>
+  </div>
+
+  <div id="players" class="hidden">
+    <div class="pcard p1 off" id="card-p1">
+      <div class="name">NGƯỜI CHƠI 1 (tay)</div>
+      <div class="row"><span>Vũ khí: <span class="wlvl" id="w1">Lv.1</span></span><span id="s1">Năng lượng</span></div>
+      <div class="ebar"><i id="e1"></i></div>
+    </div>
+    <div class="pcard p2 off" id="card-p2">
+      <div class="name">NGƯỜI CHƠI 2 (tay)</div>
+      <div class="row"><span>Vũ khí: <span class="wlvl" id="w2">Lv.1</span></span><span id="s2">Năng lượng</span></div>
+      <div class="ebar"><i id="e2"></i></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- MENU -->
+  <div class="overlay" id="menu">
+    <div class="title">SKY HUNTER<small>AI · ĐIỀU KHIỂN BẰNG TAY</small></div>
+    <div class="sub">
+      Vung <b>bàn tay trước camera</b> để lái phi thuyền — máy bay <b>tự bắn</b>.
+      Ăn <b>viên năng lượng xanh</b> để <b>lên cấp vũ khí</b> và mở khoá <b>lính bay kèm</b>.
+      Nhận diện được <b>2 tay = 2 người chơi cùng phe</b>. Hạ <b>TRÙM</b> mỗi 3 màn!
+    </div>
+    <div class="btns">
+      <button class="cta" id="btn-cam">▶ BẮT ĐẦU (CAMERA)</button>
+      <button class="cta alt" id="btn-mouse">🖱 TEST BẰNG CHUỘT</button>
+    </div>
+    <div class="loading hidden" id="loading">⏳ Đang tải AI nhận diện tay & xin quyền camera…</div>
+    <div class="hint">Mẹo: chạy bằng Live Server hoặc <b>python3 -m http.server</b> rồi mở http://localhost:8000 để camera hoạt động.</div>
+  </div>
+
+  <!-- GAME OVER -->
+  <div class="overlay hidden" id="gameover">
+    <div class="title" style="color:var(--neon2);text-shadow:0 0 12px var(--neon2)">HẾT MẠNG<small>CHIẾN ĐẤU ANH DŨNG!</small></div>
+    <div class="sub">Điểm cuối: <b id="final-score">0</b> &nbsp;·&nbsp; Tới Level <b id="final-level">1</b></div>
+    <div class="btns"><button class="cta" id="btn-again">⟳ CHƠI LẠI</button></div>
+  </div>
+</div>
+
+<!-- MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+"use strict";
+/* =========================================================================
+   SKY HUNTER AI — co-op hand-tracking shmup (single file)
+   ========================================================================= */
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const videoEl = document.getElementById("cam");
+
+let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize); resize();
+
+/* ----------------------------- Audio engine ----------------------------- */
+const Sound = (() => {
+  let ac = null, master = null, muted = false;
+  function ensure() {
+    if (ac) return;
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    master = ac.createGain(); master.gain.value = 0.5; master.connect(ac.destination);
+  }
+  function blip(freq, dur, type, vol, slideTo) {
+    if (!ac || muted) return;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || "square"; o.frequency.value = freq;
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, ac.currentTime + dur);
+    g.gain.value = vol || 0.2;
+    g.gain.exponentialRampToValueAtTime(0.0008, ac.currentTime + dur);
+    o.connect(g); g.connect(master); o.start(); o.stop(ac.currentTime + dur);
+  }
+  function noise(dur, vol) {
+    if (!ac || muted) return;
+    const n = ac.createBufferSource();
+    const buf = ac.createBuffer(1, ac.sampleRate * dur, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    n.buffer = buf;
+    const g = ac.createGain(); g.gain.value = vol || 0.3;
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+    const f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1200;
+    n.connect(f); f.connect(g); g.connect(master); n.start();
+  }
+  return {
+    init() { ensure(); if (ac.state === "suspended") ac.resume(); },
+    shoot() { blip(760, 0.06, "square", 0.06, 380); },
+    hit()   { blip(180, 0.05, "sawtooth", 0.10); },
+    boom()  { noise(0.35, 0.4); blip(120, 0.3, "sawtooth", 0.12, 40); },
+    power() { blip(520, 0.08, "sine", 0.18, 880); },
+    levelup(){ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>blip(f,0.12,"triangle",0.18),i*70)); },
+    hurt()  { blip(300, 0.25, "sawtooth", 0.22, 80); noise(0.2,0.25); },
+    boss()  { [110,110,165,110].forEach((f,i)=>setTimeout(()=>blip(f,0.18,"sawtooth",0.2),i*140)); },
+  };
+})();
+
+/* ----------------------------- Game state ------------------------------- */
+const STATE = { MENU: 0, PLAYING: 1, OVER: 2 };
+let state = STATE.MENU;
+let useCamera = false;
+
+const game = {
+  score: 0, lives: 5, level: 1,
+  enemies: [], pBullets: [], eBullets: [], orbs: [], particles: [], drones: [],
+  boss: null, bossPending: false,
+  spawnTimer: 0, waveLeft: 0, levelClearTimer: 0,
+  shake: 0,
+};
+
+// Two persistent player slots; activated when a controller (hand/mouse) maps to them.
+function makePlayer(id, color) {
+  return {
+    id, color, active: false, x: W*0.5, y: H*0.7, tx: W*0.5, ty: H*0.7,
+    weapon: 1, energy: 0, energyMax: 3, fireCd: 0, invuln: 0, seen: 0,
+  };
+}
+let players = [ makePlayer(0, "#38e8ff"), makePlayer(1, "#ff3d7f") ];
+
+/* maps a MediaPipe handedness label -> player slot index, kept stable */
+const handMap = {};
+let mouseCtl = null; // {x,y} when in mouse-test mode
+
+/* ----------------------------- Helpers ---------------------------------- */
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+function dist2(ax, ay, bx, by) { const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+
+function addParticles(x, y, color, n, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2), s = rand(spd*0.3, spd);
+    game.particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: rand(0.3,0.7), max: 0.7, color, r: rand(1.5,3.5) });
+  }
+}
+function toast(text, color) {
+  const el = document.getElementById("toast");
+  el.textContent = text; el.style.color = color || "var(--gold)";
+  el.style.transition = "none"; el.style.opacity = "1"; el.style.transform = "translateX(-50%) scale(1.2)";
+  requestAnimationFrame(() => { el.style.transition = "opacity .9s, transform .9s"; el.style.opacity = "0"; el.style.transform = "translateX(-50%) scale(1)"; });
+}
+
+/* ----------------------------- Weapons ---------------------------------- */
+const WEAPON = {
+  // returns {interval, shots:[{angleDeg, dmg}], drones}
+  spec(level) {
+    if (level <= 1) return { interval: 0.26, shots: [{a:0}], drones:0 };
+    if (level === 2) return { interval: 0.24, shots: [{a:-4},{a:4}], drones:0 };
+    if (level === 3) return { interval: 0.22, shots: [{a:-9},{a:0},{a:9}], drones:0 };
+    if (level === 4) return { interval: 0.20, shots: [{a:-16},{a:-8},{a:0},{a:8},{a:16}], drones:0 };
+    if (level === 5) return { interval: 0.18, shots: [{a:-16},{a:-8},{a:0},{a:8},{a:16}], drones:2 };
+    return { interval: 0.13, shots: [{a:-20},{a:-10},{a:0},{a:10},{a:20}], drones:2 }; // 6+
+  }
+};
+function firePlayer(p, dt) {
+  p.fireCd -= dt;
+  const spec = WEAPON.spec(p.weapon);
+  if (p.fireCd <= 0) {
+    p.fireCd = spec.interval;
+    for (const s of spec.shots) {
+      const rad = (-90 + s.a) * Math.PI/180;
+      game.pBullets.push({ x: p.x, y: p.y-20, vx: Math.cos(rad)*620, vy: Math.sin(rad)*620, r: 5, dmg: 1, color: p.color });
+    }
+    Sound.shoot();
+  }
+  // drones (lính bay kèm)
+  if (spec.drones > 0) {
+    for (let i = 0; i < spec.drones; i++) {
+      const side = i === 0 ? -1 : 1;
+      const dx = p.x + side*46, dy = p.y + 10;
+      let dr = game.drones.find(d => d.owner === p.id && d.slot === i);
+      if (!dr) { dr = { owner:p.id, slot:i, x:dx, y:dy, cd: rand(0,0.2) }; game.drones.push(dr); }
+      dr.tx = dx; dr.ty = dy;
+      dr.cd -= dt;
+      if (dr.cd <= 0) {
+        dr.cd = 0.22;
+        game.pBullets.push({ x: dr.x, y: dr.y-10, vx:0, vy:-560, r:4, dmg:1, color:"#ffd23f" });
+      }
+    }
+  }
+}
+
+/* ----------------------------- Enemies ---------------------------------- */
+function spawnEnemy(type) {
+  const x = rand(60, W-60);
+  const base = { x, y: -50, baseX: x, t: rand(0,6.28), drop: Math.random() < 0.5 };
+  if (type === "basic") return { ...base, type, hp:1, r:22, vy: rand(70,100), color:"#ff5b5b", drop:true };
+  if (type === "shooter") return { ...base, type, hp:2, r:24, vy: rand(55,80), color:"#ff9d3d", fireCd: rand(1,2), drop:true };
+  if (type === "tank") return { ...base, type, hp:5, r:34, vy: rand(35,55), color:"#b06bff", drop:true };
+}
+function startLevel(lv) {
+  game.level = lv;
+  document.getElementById("hud-level").textContent = lv;
+  if (lv % 3 === 0) { game.bossPending = true; game.waveLeft = 0; spawnBoss(); }
+  else {
+    game.bossPending = false;
+    const count = 6 + lv * 2;
+    game.waveLeft = count;
+    game.spawnQueue = [];
+    for (let i = 0; i < count; i++) {
+      const roll = Math.random();
+      let t = "basic";
+      if (lv >= 2 && roll > 0.78) t = "tank";
+      else if (roll > 0.5) t = "shooter";
+      game.spawnQueue.push(t);
+    }
+    game.spawnTimer = 0;
+    toast("MÀN " + lv, "#38e8ff");
+  }
+}
+function spawnBoss() {
+  Sound.boss();
+  const hp = 60 + game.level * 26;
+  game.boss = { x: W/2, y: -120, ty: 130, r: 70, hp, hpMax: hp, t: 0, dir: 1, fireCd: 1.2, pattern: 0, patternT: 0, entered:false };
+  document.getElementById("boss-wrap").classList.remove("hidden");
+  document.getElementById("boss-name").textContent = "⚠ TRÙM MÀN " + game.level + " ⚠";
+  toast("TRÙM XUẤT HIỆN!", "#ff3d7f");
+}
+
+/* ----------------------------- Input: hands ----------------------------- */
+function assignHand(label, lm) {
+  // landmark 9 = middle finger MCP ≈ palm center
+  const p = lm[9];
+  const x = (1 - p.x) * W;   // mirror horizontally
+  const y = p.y * H;
+  if (handMap[label] === undefined) {
+    // pick first free slot
+    const used = Object.values(handMap);
+    const slot = used.includes(0) ? 1 : 0;
+    handMap[label] = slot;
+  }
+  const idx = handMap[label];
+  const pl = players[idx];
+  pl.tx = clamp(x, 30, W-30); pl.ty = clamp(y, 30, H-30);
+  pl.seen = 0.25; // seconds of "freshness"
+}
+function onHandResults(results) {
+  if (state !== STATE.PLAYING) return;
+  const lms = results.multiHandLandmarks || [];
+  const handed = results.multiHandedness || [];
+  for (let i = 0; i < lms.length; i++) {
+    const label = (handed[i] && handed[i].label) ? handed[i].label : ("H"+i);
+    assignHand(label, lms[i]);
+  }
+}
+
+/* ----------------------------- MediaPipe init --------------------------- */
+let hands = null, mpCamera = null;
+async function initCamera() {
+  document.getElementById("loading").classList.remove("hidden");
+  try {
+    hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5 });
+    hands.onResults(onHandResults);
+    mpCamera = new Camera(videoEl, {
+      onFrame: async () => { if (state === STATE.PLAYING) await hands.send({ image: videoEl }); },
+      width: 1280, height: 720,
+    });
+    await mpCamera.start();
+    useCamera = true;
+    beginGame();
+  } catch (err) {
+    console.error(err);
+    document.getElementById("loading").textContent = "❌ Không bật được camera. Hãy chạy qua localhost (python3 -m http.server) và cho phép camera. Bạn vẫn có thể bấm 'Test bằng chuột'.";
+  }
+}
+
+/* ----------------------------- Mouse fallback --------------------------- */
+window.addEventListener("mousemove", (e) => { if (mouseCtl) { mouseCtl.x = e.clientX; mouseCtl.y = e.clientY; } });
+window.addEventListener("touchmove", (e) => { if (mouseCtl && e.touches[0]) { mouseCtl.x = e.touches[0].clientX; mouseCtl.y = e.touches[0].clientY; } }, {passive:true});
+
+/* ----------------------------- Game flow -------------------------------- */
+function beginGame() {
+  state = STATE.PLAYING;
+  game.score = 0; game.lives = 5; game.level = 1;
+  game.enemies = []; game.pBullets = []; game.eBullets = []; game.orbs = []; game.particles = []; game.drones = [];
+  game.boss = null; game.bossPending = false; game.shake = 0;
+  players = [ makePlayer(0, "#38e8ff"), makePlayer(1, "#ff3d7f") ];
+  for (const k in handMap) delete handMap[k];
+  document.getElementById("menu").classList.add("hidden");
+  document.getElementById("gameover").classList.add("hidden");
+  document.getElementById("hud").classList.remove("hidden");
+  document.getElementById("players").classList.remove("hidden");
+  updateHUD();
+  startLevel(1);
+}
+function gameOver() {
+  state = STATE.OVER;
+  document.getElementById("final-score").textContent = game.score;
+  document.getElementById("final-level").textContent = game.level;
+  document.getElementById("hud").classList.add("hidden");
+  document.getElementById("players").classList.add("hidden");
+  document.getElementById("boss-wrap").classList.add("hidden");
+  document.getElementById("gameover").classList.remove("hidden");
+}
+function loseLife() {
+  // GOD MODE: bất tử — chỉ rung + âm thanh, không mất mạng, không game over
+  game.shake = 16; Sound.hurt();
+}
+
+/* ----------------------------- Update ----------------------------------- */
+function update(dt) {
+  if (state !== STATE.PLAYING) return;
+
+  // ----- controllers -> players -----
+  if (mouseCtl) { const pl = players[0]; pl.tx = mouseCtl.x; pl.ty = mouseCtl.y; pl.seen = 0.25; }
+  for (const p of players) {
+    p.seen -= dt;
+    p.active = p.seen > 0;
+    if (p.active) {
+      p.x += (p.tx - p.x) * Math.min(1, dt*14);
+      p.y += (p.ty - p.y) * Math.min(1, dt*14);
+      if (p.invuln > 0) p.invuln -= dt;
+      firePlayer(p, dt);
+    }
+  }
+  const anyActive = players.some(p => p.active);
+
+  // ----- enemy spawning -----
+  if (!game.bossPending && game.spawnQueue && game.spawnQueue.length) {
+    game.spawnTimer -= dt;
+    if (game.spawnTimer <= 0) {
+      game.spawnTimer = rand(0.45, 0.95);
+      const t = game.spawnQueue.shift();
+      game.enemies.push(spawnEnemy(t));
+    }
+  }
+
+  // ----- player bullets -----
+  for (const b of game.pBullets) { b.x += b.vx*dt; b.y += b.vy*dt; }
+  game.pBullets = game.pBullets.filter(b => b.y > -30 && b.y < H+30 && b.x > -30 && b.x < W+30);
+
+  // ----- drones smooth follow -----
+  for (const d of game.drones) {
+    if (d.tx !== undefined) { d.x += (d.tx-d.x)*Math.min(1,dt*16); d.y += (d.ty-d.y)*Math.min(1,dt*16); }
+  }
+  // drop drones whose owner lost the weapon level / inactive
+  game.drones = game.drones.filter(d => {
+    const o = players[d.owner];
+    return o.active && WEAPON.spec(o.weapon).drones > d.slot;
+  });
+
+  // ----- enemies -----
+  for (const e of game.enemies) {
+    e.t += dt;
+    e.y += e.vy * dt;
+    e.x = e.baseX + Math.sin(e.t*1.4) * 40;
+    if (e.type === "shooter" && e.y > 0 && e.y < H*0.7) {
+      e.fireCd -= dt;
+      if (e.fireCd <= 0 && anyActive) {
+        e.fireCd = rand(1.4, 2.6);
+        const target = players.find(p=>p.active);
+        const ang = Math.atan2(target.y - e.y, target.x - e.x);
+        game.eBullets.push({ x:e.x, y:e.y, vx:Math.cos(ang)*240, vy:Math.sin(ang)*240, r:6, color:"#ffec6b" });
+      }
+    }
+    if (e.y > H + 40) { e._gone = true; loseLife(); }
+  }
+
+  // ----- boss -----
+  if (game.boss) updateBoss(dt, anyActive);
+
+  // ----- enemy bullets -----
+  for (const b of game.eBullets) { b.x += b.vx*dt; b.y += b.vy*dt; }
+  game.eBullets = game.eBullets.filter(b => b.y > -30 && b.y < H+30 && b.x > -30 && b.x < W+30);
+
+  // ----- orbs -----
+  for (const o of game.orbs) {
+    o.y += o.vy*dt; o.vy += 60*dt; o.t += dt;
+    if (o.vy > 160) o.vy = 160;
+  }
+  game.orbs = game.orbs.filter(o => o.y < H+40);
+
+  // ----- collisions: player bullets vs enemies -----
+  for (const b of game.pBullets) {
+    if (b._dead) continue;
+    for (const e of game.enemies) {
+      if (e._gone) continue;
+      if (dist2(b.x,b.y,e.x,e.y) < (e.r+b.r)*(e.r+b.r)) {
+        e.hp -= b.dmg; b._dead = true;
+        addParticles(b.x, b.y, e.color, 4, 160);
+        if (e.hp <= 0) killEnemy(e);
+        break;
+      }
+    }
+    if (b._dead) continue;
+    if (game.boss && !game.boss._dead && game.boss.entered) {
+      const bs = game.boss;
+      if (dist2(b.x,b.y,bs.x,bs.y) < (bs.r+b.r)*(bs.r+b.r)) {
+        bs.hp -= b.dmg; b._dead = true; addParticles(b.x,b.y,"#ff9d3d",4,160);
+        if (bs.hp <= 0) killBoss();
+      }
+    }
+  }
+  game.pBullets = game.pBullets.filter(b => !b._dead);
+  game.enemies = game.enemies.filter(e => !e._gone);
+
+  // ----- collisions: enemy bullets vs players -----
+  for (const b of game.eBullets) {
+    for (const p of players) {
+      if (!p.active || p.invuln > 0) continue;
+      if (dist2(b.x,b.y,p.x,p.y) < (26+b.r)*(26+b.r)) {
+        b._dead = true; p.invuln = 1.5; addParticles(p.x,p.y,p.color,16,240); loseLife();
+      }
+    }
+  }
+  game.eBullets = game.eBullets.filter(b => !b._dead);
+
+  // ----- collisions: enemies body vs players -----
+  for (const e of game.enemies) {
+    for (const p of players) {
+      if (!p.active || p.invuln > 0) continue;
+      if (dist2(e.x,e.y,p.x,p.y) < (e.r+24)*(e.r+24)) {
+        p.invuln = 1.5; addParticles(p.x,p.y,p.color,16,240); killEnemy(e, true); loseLife();
+      }
+    }
+  }
+  game.enemies = game.enemies.filter(e => !e._gone);
+
+  // ----- collisions: orbs vs players -----
+  for (const o of game.orbs) {
+    for (const p of players) {
+      if (!p.active) continue;
+      if (dist2(o.x,o.y,p.x,p.y) < (24+o.r)*(24+o.r)) {
+        o._dead = true; collectEnergy(p);
+      }
+    }
+  }
+  game.orbs = game.orbs.filter(o => !o._dead);
+
+  // ----- particles -----
+  for (const pt of game.particles) { pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vx*=0.94; pt.vy*=0.94; pt.life -= dt; }
+  game.particles = game.particles.filter(pt => pt.life > 0);
+
+  // ----- level clear check -----
+  if (!game.bossPending && (!game.spawnQueue || game.spawnQueue.length === 0) && game.enemies.length === 0) {
+    game.levelClearTimer += dt;
+    if (game.levelClearTimer > 1.2) { game.levelClearTimer = 0; startLevel(game.level + 1); }
+  } else {
+    game.levelClearTimer = 0;
+  }
+
+  if (game.shake > 0) game.shake -= dt*40;
+  updatePlayerCards();
+}
+
+function killEnemy(e, silent) {
+  e._gone = true;
+  game.score += e.type === "tank" ? 80 : e.type === "shooter" ? 40 : 20;
+  addParticles(e.x, e.y, e.color, 14, 220);
+  game.shake = Math.max(game.shake, 5);
+  if (!silent) Sound.boom();
+  const orbCount = e.type === "tank" ? 3 : e.type === "shooter" ? 2 : 1;
+  for (let i = 0; i < orbCount; i++) game.orbs.push({ x:e.x+rand(-14,14), y:e.y, vy:40, r:11, t:0 });
+  if (game.waveLeft > 0) game.waveLeft--;
+  updateHUD();
+}
+function killBoss() {
+  const bs = game.boss; bs._dead = true;
+  game.score += 500 + game.level*100;
+  for (let i=0;i<6;i++) setTimeout(()=>{ addParticles(bs.x+rand(-50,50), bs.y+rand(-40,40), "#ffd23f", 20, 300); Sound.boom(); }, i*90);
+  // shower of orbs
+  for (let i=0;i<6;i++) game.orbs.push({ x:bs.x+rand(-60,60), y:bs.y, vy:rand(20,60), r:11, t:0 });
+  game.boss = null; game.bossPending = false;
+  document.getElementById("boss-wrap").classList.add("hidden");
+  game.shake = 20; toast("HẠ TRÙM! +" + (500+game.level*100), "#ffd23f");
+  updateHUD();
+  game.levelClearTimer = 0; setTimeout(()=>{ if (state===STATE.PLAYING) startLevel(game.level+1); }, 1400);
+}
+function collectEnergy(p) {
+  Sound.power(); game.score += 5;
+  p.energy += 2; // mỗi viên +2 năng lượng → lên cấp nhanh
+  addParticles(p.x, p.y, "#5cff8f", 10, 180);
+  while (p.energy >= p.energyMax) {
+    p.energy -= p.energyMax;
+    if (p.weapon < 6) { p.weapon++; p.energyMax += 1; }
+    else { game.score += 100; p.energy = 0; break; } // maxed -> bonus points
+    Sound.levelup();
+    toast((p.id===0?"P1":"P2")+" VŨ KHÍ Lv."+p.weapon+"!", p.color);
+  }
+  updateHUD();
+}
+
+/* ----------------------------- Boss AI ---------------------------------- */
+function updateBoss(dt, anyActive) {
+  const bs = game.boss; bs.t += dt;
+  if (!bs.entered) {
+    bs.y += (bs.ty - bs.y) * Math.min(1, dt*2);
+    if (Math.abs(bs.y - bs.ty) < 4) bs.entered = true;
+    return;
+  }
+  bs.x += bs.dir * 70 * dt;
+  if (bs.x < bs.r+20) { bs.x = bs.r+20; bs.dir = 1; }
+  if (bs.x > W-bs.r-20) { bs.x = W-bs.r-20; bs.dir = -1; }
+
+  bs.fireCd -= dt;
+  bs.patternT += dt;
+  if (bs.patternT > 5) { bs.patternT = 0; bs.pattern = (bs.pattern+1) % 3; }
+  if (bs.fireCd <= 0 && anyActive) {
+    if (bs.pattern === 0) { // radial burst
+      bs.fireCd = 1.6;
+      const n = 14;
+      for (let i=0;i<n;i++){ const a = (i/n)*Math.PI*2; game.eBullets.push({x:bs.x,y:bs.y,vx:Math.cos(a)*180,vy:Math.sin(a)*180,r:6,color:"#ff6bd6"}); }
+    } else if (bs.pattern === 1) { // aimed triple
+      bs.fireCd = 0.7;
+      const t = players.find(p=>p.active); if (t){ const base=Math.atan2(t.y-bs.y,t.x-bs.x);
+        for (const off of [-0.2,0,0.2]) game.eBullets.push({x:bs.x,y:bs.y,vx:Math.cos(base+off)*300,vy:Math.sin(base+off)*300,r:6,color:"#ffec6b"}); }
+    } else { // downward rain
+      bs.fireCd = 0.35;
+      const x = rand(60,W-60);
+      game.eBullets.push({x, y:bs.y, vx:0, vy:260, r:6, color:"#ff9d3d"});
+    }
+  }
+  document.querySelector("#boss-bar > i").style.width = (100*Math.max(0,bs.hp)/bs.hpMax) + "%";
+}
+
+/* ----------------------------- Render ----------------------------------- */
+function drawShip(p) {
+  const blink = p.invuln > 0 && (Math.floor(p.invuln*12)%2===0);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  if (blink) ctx.globalAlpha = 0.35;
+  // glow
+  ctx.shadowColor = p.color; ctx.shadowBlur = 18;
+  ctx.fillStyle = p.color;
+  ctx.beginPath();
+  ctx.moveTo(0, -22); ctx.lineTo(16, 14); ctx.lineTo(6, 8); ctx.lineTo(0, 16);
+  ctx.lineTo(-6, 8); ctx.lineTo(-16, 14); ctx.closePath(); ctx.fill();
+  // cockpit
+  ctx.shadowBlur = 0; ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(0, -4, 4, 0, 6.28); ctx.fill();
+  // engine flame
+  ctx.fillStyle = "rgba(255,200,80,.9)";
+  ctx.beginPath(); ctx.moveTo(-5,16); ctx.lineTo(0, 16+rand(8,18)); ctx.lineTo(5,16); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawDrone(d, color) {
+  ctx.save(); ctx.translate(d.x,d.y); ctx.shadowColor=color; ctx.shadowBlur=10;
+  ctx.fillStyle = color; ctx.fillRect(-7,-7,14,14);
+  ctx.fillStyle = "#04121a"; ctx.fillRect(-3,-3,6,6); ctx.restore();
+}
+function drawEnemy(e) {
+  ctx.save(); ctx.translate(e.x, e.y); ctx.shadowColor=e.color; ctx.shadowBlur=12; ctx.fillStyle=e.color;
+  if (e.type === "tank") {
+    ctx.fillRect(-e.r,-e.r*0.6,e.r*2,e.r*1.2);
+    ctx.fillStyle="#fff"; ctx.fillRect(-6,-6,12,12);
+  } else {
+    // cross-plane (like the reference)
+    const r=e.r;
+    ctx.fillRect(-r,-6,r*2,12); ctx.fillRect(-6,-r*0.7,12,r*1.4);
+    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(0,0,4,0,6.28); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawBoss(bs) {
+  ctx.save(); ctx.translate(bs.x, bs.y); ctx.shadowColor="#ff3d7f"; ctx.shadowBlur=24;
+  ctx.fillStyle="#ff3d7f";
+  ctx.beginPath(); ctx.ellipse(0,0,bs.r,bs.r*0.7,0,0,6.28); ctx.fill();
+  ctx.fillStyle="#b06bff"; ctx.beginPath(); ctx.ellipse(0,0,bs.r*0.55,bs.r*0.4,0,0,6.28); ctx.fill();
+  ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(0,0,bs.r*0.18,0,6.28); ctx.fill();
+  // side cannons
+  ctx.fillStyle="#ff9d3d"; ctx.fillRect(-bs.r,-8,16,16); ctx.fillRect(bs.r-16,-8,16,16);
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if (game.shake > 0) ctx.translate(rand(-game.shake,game.shake), rand(-game.shake,game.shake));
+
+  // background: camera or gradient
+  if (useCamera && videoEl.readyState >= 2) {
+    ctx.save(); ctx.translate(W,0); ctx.scale(-1,1); // mirror
+    // cover-fit
+    const vr = videoEl.videoWidth/videoEl.videoHeight, sr = W/H;
+    let dw=W, dh=H, dx=0, dy=0;
+    if (vr > sr) { dh=H; dw=H*vr; dx=-(dw-W)/2; } else { dw=W; dh=W/vr; dy=-(dh-H)/2; }
+    ctx.globalAlpha = 0.85; ctx.drawImage(videoEl, dx, dy, dw, dh); ctx.restore();
+    ctx.fillStyle="rgba(4,6,16,0.42)"; ctx.fillRect(0,0,W,H);
+  } else {
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,"#0a1430"); g.addColorStop(1,"#05060c");
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    // simple star drift
+    ctx.fillStyle="rgba(255,255,255,.5)";
+    const t = performance.now()*0.03;
+    for (let i=0;i<60;i++){ const sx=(i*137.5)%W, sy=((i*89.3)+t)%H; ctx.fillRect(sx,sy,2,2); }
+  }
+
+  if (state === STATE.PLAYING || state === STATE.OVER) {
+    // orbs
+    for (const o of game.orbs) {
+      ctx.save(); ctx.translate(o.x,o.y); ctx.rotate(o.t*3); ctx.shadowColor="#5cff8f"; ctx.shadowBlur=14;
+      ctx.fillStyle="#5cff8f"; ctx.fillRect(-o.r,-o.r,o.r*2,o.r*2);
+      ctx.fillStyle="#0a3"; ctx.fillRect(-3,-3,6,6); ctx.restore();
+    }
+    // enemies
+    for (const e of game.enemies) drawEnemy(e);
+    if (game.boss) drawBoss(game.boss);
+    // bullets
+    for (const b of game.pBullets) { ctx.save(); ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.fillStyle=b.color;
+      ctx.fillRect(b.x-2, b.y-7, 4, 14); ctx.restore(); }
+    for (const b of game.eBullets) { ctx.save(); ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.fillStyle=b.color;
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,6.28); ctx.fill(); ctx.restore(); }
+    // drones
+    for (const d of game.drones) drawDrone(d, players[d.owner].color);
+    // ships
+    for (const p of players) if (p.active) drawShip(p);
+    // particles
+    for (const pt of game.particles) {
+      ctx.globalAlpha = Math.max(0, pt.life/pt.max); ctx.fillStyle=pt.color;
+      ctx.beginPath(); ctx.arc(pt.x,pt.y,pt.r,0,6.28); ctx.fill(); ctx.globalAlpha=1;
+    }
+  }
+  ctx.restore();
+}
+
+/* ----------------------------- HUD sync --------------------------------- */
+function updateHUD() {
+  document.getElementById("hud-score").textContent = game.score;
+  document.getElementById("hud-level").textContent = game.level;
+  document.getElementById("hud-lives").textContent = "∞";
+}
+function updatePlayerCards() {
+  [0,1].forEach(i => {
+    const p = players[i];
+    const card = document.getElementById("card-p"+(i+1));
+    card.classList.toggle("off", !p.active);
+    document.getElementById("w"+(i+1)).textContent = "Lv." + p.weapon + (p.weapon>=5 ? " +Lính" : "");
+    document.getElementById("e"+(i+1)).style.width = (100*p.energy/p.energyMax) + "%";
+  });
+}
+
+/* ----------------------------- Main loop -------------------------------- */
+let last = performance.now();
+function loop(now) {
+  let dt = (now - last) / 1000; last = now;
+  if (dt > 0.05) dt = 0.05;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ----------------------------- Buttons ---------------------------------- */
+document.getElementById("btn-cam").addEventListener("click", () => { Sound.init(); useCamera = true; mouseCtl = null; initCamera(); });
+document.getElementById("btn-mouse").addEventListener("click", () => {
+  Sound.init(); useCamera = false; mouseCtl = { x: W/2, y: H*0.7 }; beginGame();
+});
+document.getElementById("btn-again").addEventListener("click", () => {
+  if (useCamera) beginGame(); else { mouseCtl = { x:W/2, y:H*0.7 }; beginGame(); }
+});
+</script>
+</body>
+</html>
